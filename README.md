@@ -21,26 +21,26 @@ USB_DRIVE:\
 ├── frontend\
 │   ├── index.html
 │   └── mermaid.min.js
+├── wheels\
+│   ├── illama.cpp whl for no need to compile  theme .
+│  
 │
 ├── models\
 │   ├── Phi-3-mini-4k-instruct-q4.gguf
 │   └── embeddings\
 │
-└── data\
+└── data\ your pdf files or system outside location is fine .
 ```
 
+
 ## Quick Start
-
-### Option 1: Use system Python (no setup needed)
-1. Copy to USB
-2. Double-click start.bat
-3. First run will install packages automatically
-
-### Option 2: Fully portable (recommended)
+# Fully portable (recommended)
 1. Copy to USB
 2. Double-click dev_install.bat (needs internet once)(i think no need if  a github repository have python.zip)
 3. Double-click start.bat
-4. iff you need test you chat model cleck the chat.bat file 
+4. iff you need test you chat model cleck the chat.bat file
+
+# after that you need on internet.
 
 
 ## Usage
