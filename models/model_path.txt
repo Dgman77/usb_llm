@@ -1,3 +1,1 @@
 models\Phi-3-mini-4k-instruct-q4.gguf
-use any model ... reminder check your system is capable for that model to operate 
-

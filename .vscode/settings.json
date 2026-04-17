@@ -3,5 +3,7 @@
   "python.analysis.extraPaths": [
     "${workspaceFolder}\\venv\\Lib\\site-packages"
   ],
-  "python.analysis.typeCheckingMode": "off"
+  "python.analysis.typeCheckingMode": "off",
+  "python-envs.defaultEnvManager": "ms-python.python:conda",
+  "python-envs.defaultPackageManager": "ms-python.python:conda"
 }

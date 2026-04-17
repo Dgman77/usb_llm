@@ -1,155 +1,201 @@
+```bat
 @echo off
-setlocal enabledelayedexpansion
+setlocal EnableDelayedExpansion
+title DiagramAI -- Setup
+color 0A
 
 :: ============================================================
-:: PENDRIVE AI - ONE TIME SETUP
+:: ROOT PATH
 :: ============================================================
+set "ROOT=%~dp0"
+if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
-SET ROOT=%~dp0
-IF "%ROOT:~-1%"=="\" SET ROOT=%ROOT:~0,-1%
+set "PY_DIR=%ROOT%\python"
+set "PY=%PY_DIR%\python.exe"
+set "SCRIPTS=%PY_DIR%\Scripts"
+set "WHEELS=%ROOT%\wheels"
 
-SET PY=%ROOT%\python\python.exe
+set "PYTHONHOME=%PY_DIR%"
+set "PYTHONNOUSERSITE=1"
+set "PATH=%PY_DIR%;%SCRIPTS%;%SystemRoot%\system32;%SystemRoot%"
 
+echo.
 echo ============================================================
-echo   PENDRIVE AI SETUP
-echo   Root: %ROOT%
+echo   DiagramAI -- Setup
+echo   Drive: %ROOT:~0,2%
 echo ============================================================
 echo.
 
-:: ─────────────────────────────────────────────
-:: CHECK PYTHON
-:: ─────────────────────────────────────────────
-IF NOT EXIST "%PY%" (
-    echo [ERROR] Portable Python not found!
-    echo Expected: %ROOT%\python\python.exe
-    pause & exit /b 1
-)
-
-echo [OK] Python found: %PY%
-echo.
-
-:: ─────────────────────────────────────────────
-:: HARD ISOLATION (IMPORTANT)
-:: ─────────────────────────────────────────────
-SET PYTHONHOME=%ROOT%\python
-SET PYTHONNOUSERSITE=1
-SET PYTHONPATH=
-SET PATH=%ROOT%\python;%ROOT%\python\Scripts
-
-echo [OK] Environment isolated
-echo.
-
-:: ─────────────────────────────────────────────
-:: STEP 1 - Upgrade pip
-:: ─────────────────────────────────────────────
-echo [1/9] Upgrading pip...
-"%PY%" -m pip install --upgrade pip || goto :error
-echo.
-
-:: ─────────────────────────────────────────────
-:: STEP 2 - Core backend
-:: ─────────────────────────────────────────────
-echo [2/9] Installing FastAPI stack...
-"%PY%" -m pip install fastapi uvicorn python-multipart aiofiles || goto :error
-echo.
-
-:: ─────────────────────────────────────────────
-:: STEP 3 - PDF support
-:: ─────────────────────────────────────────────
-echo [3/9] Installing PyMuPDF...
-"%PY%" -m pip install PyMuPDF || goto :error
-echo.
-
-:: ─────────────────────────────────────────────
-:: STEP 4 - RAG search
-:: ─────────────────────────────────────────────
-echo [4/9] Installing FAISS + BM25...
-"%PY%" -m pip install faiss-cpu rank-bm25 || goto :error
-echo.
-
-:: ─────────────────────────────────────────────
-:: STEP 5 - Numpy
-:: ─────────────────────────────────────────────
-echo [5/9] Installing Numpy...
-"%PY%" -m pip install "numpy>=1.24,<2.0" || goto :error
-echo.
-
-:: ─────────────────────────────────────────────
-:: STEP 6 - Pydantic
-:: ─────────────────────────────────────────────
-echo [6/9] Installing Pydantic...
-"%PY%" -m pip install pydantic || goto :error
-echo.
-
-:: ─────────────────────────────────────────────
-:: STEP 7 - DOCX support
-:: ─────────────────────────────────────────────
-echo [7/9] Installing python-docx...
-"%PY%" -m pip install python-docx || goto :error
-echo.
-
-:: ─────────────────────────────────────────────
-:: STEP 8 - llama-cpp (PREBUILT ONLY)
-:: ─────────────────────────────────────────────
-echo [8/9] Installing llama-cpp-python...
-
-SET WHEEL_FOUND=
-
-FOR %%F IN ("%ROOT%\wheels\llama_cpp_python-*.whl") DO (
-    SET WHEEL_FOUND=%%F
-)
-
-IF DEFINED WHEEL_FOUND (
-    echo Found wheel: !WHEEL_FOUND!
-    "%PY%" -m pip install "!WHEEL_FOUND!" || goto :error
-) ELSE (
+:: ============================================================
+:: INSTALL EMBEDDED PYTHON IF MISSING
+:: ============================================================
+if exist "%PY%" (
+    echo [SKIP] Embedded Python already installed
+    echo        %PY%
     echo.
-    echo [ERROR] llama-cpp wheel NOT FOUND
-    echo Download from:
-    echo https://github.com/abetlen/llama-cpp-python/releases
-    echo Place inside: %ROOT%\wheels\
-    echo.
-    pause & exit /b 1
+    goto :CHECK_PACKAGES
+)
+
+echo [INFO] Embedded Python not found. Installing...
+echo.
+
+if not exist "%PY_DIR%" mkdir "%PY_DIR%"
+
+set "PY_ZIP=%ROOT%\python_embed.zip"
+
+echo [INFO] Downloading Python...
+powershell -Command ^
+"$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip' -OutFile '%PY_ZIP%'"
+
+if not exist "%PY_ZIP%" (
+    echo [ERROR] Python download failed.
+    pause
+    exit /b 1
+)
+
+echo [INFO] Extracting Python...
+powershell -Command ^
+"Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('%PY_ZIP%', '%PY_DIR%')"
+
+del "%PY_ZIP%"
+
+if not exist "%PY%" (
+    echo [ERROR] Python extraction failed.
+    pause
+    exit /b 1
+)
+
+echo [OK] Embedded Python installed
+echo.
+
+:: ============================================================
+:: ENABLE SITE-PACKAGES
+:: ============================================================
+echo [INFO] Enabling site-packages...
+powershell -Command ^
+"$f='%PY_DIR%\python311._pth'; $c=Get-Content $f; $c=$c -replace '#import site','import site'; if ($c -notcontains 'Lib\site-packages') { $c += 'Lib\site-packages' }; Set-Content $f $c"
+
+echo [OK] site-packages enabled
+echo.
+
+:: ============================================================
+:: INSTALL PIP
+:: ============================================================
+echo [INFO] Installing pip...
+powershell -Command ^
+"$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%ROOT%\get-pip.py'"
+
+"%PY%" "%ROOT%\get-pip.py" --quiet
+del "%ROOT%\get-pip.py"
+
+"%PY%" -m pip install --upgrade pip --quiet
+
+echo [OK] pip installed
+echo.
+
+:: ============================================================
+:: CHECK REQUIRED PACKAGES
+:: ============================================================
+:CHECK_PACKAGES
+
+set "INSTALL_LIST="
+set /a SKIP=0
+set /a NEED=0
+
+call :CHECK fastapi fastapi
+call :CHECK uvicorn uvicorn
+call :CHECK multipart python-multipart
+call :CHECK aiofiles aiofiles
+call :CHECK fitz PyMuPDF
+call :CHECK faiss faiss-cpu
+call :CHECK numpy numpy
+call :CHECK pydantic pydantic
+call :CHECK rank_bm25 rank-bm25
+call :CHECK docx python-docx
+
+echo.
+echo Packages already installed : %SKIP%
+echo Packages to install       : %NEED%
+echo.
+
+if defined INSTALL_LIST (
+    echo [INFO] Installing missing packages...
+    "%PY%" -m pip install %INSTALL_LIST%
+    if errorlevel 1 goto :ERROR
+    echo [OK] Packages installed
+) else (
+    echo [OK] All required packages already installed
 )
 
 echo.
 
-:: ─────────────────────────────────────────────
-:: STEP 9 - canvas support
-:: ─────────────────────────────────────────────
-echo [9/9] Installing canvas and python-docx...
-"%PY%" -m pip install canvas python-docx || goto :error
+:: ============================================================
+:: INSTALL LLAMA_CPP IF MISSING
+:: ============================================================
+"%PY%" -c "import llama_cpp" >nul 2>&1
+if not errorlevel 1 (
+    echo [SKIP] llama_cpp already installed
+    goto :DONE
+)
+
+echo [INFO] llama_cpp not installed
+set "WHEEL_FILE="
+
+for %%F in ("%WHEELS%\llama_cpp_python-*.whl") do (
+    set "WHEEL_FILE=%%F"
+)
+
+if not defined WHEEL_FILE (
+    echo.
+    echo [ERROR] llama_cpp wheel not found
+    echo Place wheel in:
+    echo %WHEELS%
+    echo.
+    pause
+    exit /b 1
+)
+
+echo [INFO] Installing llama_cpp...
+"%PY%" -m pip install "!WHEEL_FILE!"
+if errorlevel 1 goto :ERROR
+
+echo [OK] llama_cpp installed
 echo.
 
-
-:: ─────────────────────────────────────────────
-:: VERIFY INSTALLS
-:: ─────────────────────────────────────────────
+:: ============================================================
+:: DONE
+:: ============================================================
+:DONE
 echo ============================================================
-echo VERIFYING INSTALLATIONS
+echo   SETUP COMPLETE
+echo   Put GGUF models in:
+echo   %ROOT%\models\
+echo   Users can now run run.bat
 echo ============================================================
-
-"%PY%" -c "import fastapi, uvicorn; print('FastAPI OK')"
-"%PY%" -c "import fitz; print('PyMuPDF OK')"
-"%PY%" -c "import faiss; print('FAISS OK')"
-"%PY%" -c "import numpy; print('NumPy OK')"
-"%PY%" -c "import pydantic; print('Pydantic OK')"
-"%PY%" -c "import rank_bm25; print('BM25 OK')"
-"%PY%" -c "import docx; print('DOCX OK')"
-"%PY%" -c "from llama_cpp import Llama; print('LLM OK')"
-"%PY%" -c "from canvas; print('canvas OK')"
-
 echo.
-echo ============================================================
-echo SETUP COMPLETE ✅
-echo Pendrive is ready to run on ANY PC 🚀
-echo ============================================================
 pause
 exit /b 0
 
-:error
+:: ============================================================
+:: PACKAGE CHECK SUBROUTINE
+:: %1 = import name
+:: %2 = pip package name
+:: ============================================================
+:CHECK
+"%PY%" -c "import %~1" >nul 2>&1
+if not errorlevel 1 (
+    echo [SKIP] %~2
+    set /a SKIP+=1
+) else (
+    echo [NEED] %~2
+    set "INSTALL_LIST=!INSTALL_LIST! %~2"
+    set /a NEED+=1
+)
+exit /b 0
+
+:ERROR
 echo.
-echo ❌ INSTALL FAILED
-echo Check error above
+echo [ERROR] Installation failed.
 pause
 exit /b 1
+```
