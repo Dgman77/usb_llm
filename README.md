@@ -8,9 +8,9 @@ USB_DRIVE:\
 ├── setup.bat                 ← Run ONCE to download portable Python
 ├── wait_for_server.py
 │
-├── python_runtime\           ← Created by setup.bat (optional)
+├── python\           ← Created by setup.bat (optional)
 │   └── python.exe
-│
+│   └── lib\packages
 ├── backend\
 │   ├── main.py
 │   ├── llm.py
@@ -41,6 +41,7 @@ USB_DRIVE:\
 2. Double-click dev_install.bat (needs internet once)(i think no need if  a github repository have python.zip)
 3. Double-click start.bat
 4. iff you need test you chat model cleck the chat.bat file 
+
 
 ## Usage
 
