@@ -38,8 +38,9 @@ USB_DRIVE:\
 
 ### Option 2: Fully portable (recommended)
 1. Copy to USB
-2. Double-click setup.bat (needs internet once)
+2. Double-click dev_install.bat (needs internet once)(i think no need if  a github repository have python.zip)
 3. Double-click start.bat
+4. iff you need test you chat model cleck the chat.bat file 
 
 ## Usage
 
