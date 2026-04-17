@@ -8,7 +8,7 @@ USB_DRIVE:\ [format you usb to 'exfat' file system]
 ├── dev_install.bat           ← Run ONCE to download portable Python and it packages
 ├── wait_for_server.py
 │
-├── python\           ← Created by setup.bat (optional)
+├── python\           ← python and packages (optional)
 │   └── python.exe
 │   └── lib\packages
 ├── backend\
