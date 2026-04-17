@@ -3,7 +3,7 @@
 ## Folder Structure
 
 ```
-USB_DRIVE:\
+USB_DRIVE:\ [format you usb to 'exfat' file system]
 ├── start.bat                 ← Double-click to START
 ├── setup.bat                 ← Run ONCE to download portable Python
 ├── wait_for_server.py
