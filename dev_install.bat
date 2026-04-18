@@ -1,201 +1,261 @@
-```bat
 @echo off
-setlocal EnableDelayedExpansion
+setlocal enabledelayedexpansion
 title DiagramAI -- Setup
 color 0A
 
-:: ============================================================
-:: ROOT PATH
-:: ============================================================
-set "ROOT=%~dp0"
-if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
+SET ROOT=%~dp0
+IF "%ROOT:~-1%"=="\" SET ROOT=%ROOT:~0,-1%
 
-set "PY_DIR=%ROOT%\python"
-set "PY=%PY_DIR%\python.exe"
-set "SCRIPTS=%PY_DIR%\Scripts"
-set "WHEELS=%ROOT%\wheels"
+SET PY=%ROOT%\python\python.exe
+SET PY_DIR=%ROOT%\python
+SET SITE=%ROOT%\python\Lib\site-packages
+SET SCRIPTS=%ROOT%\python\Scripts
+SET WHEELS=%ROOT%\wheels
 
-set "PYTHONHOME=%PY_DIR%"
-set "PYTHONNOUSERSITE=1"
-set "PATH=%PY_DIR%;%SCRIPTS%;%SystemRoot%\system32;%SystemRoot%"
+SET PYTHONHOME=%PY_DIR%
+SET PYTHONNOUSERSITE=1
+SET PYTHONPATH=
+SET PATH=%PY_DIR%;%SCRIPTS%;%SystemRoot%\system32;%SystemRoot%
 
 echo.
 echo ============================================================
-echo   DiagramAI -- Setup
-echo   Drive: %ROOT:~0,2%
+echo   DiagramAI -- Setup   ^|   Drive: %ROOT:~0,2%
 echo ============================================================
 echo.
 
-:: ============================================================
-:: INSTALL EMBEDDED PYTHON IF MISSING
-:: ============================================================
-if exist "%PY%" (
-    echo [SKIP] Embedded Python already installed
+:: ─────────────────────────────────────────────────────────────
+:: DETECT DOWNLOAD TOOL: curl first, then bitsadmin, then powershell
+:: ─────────────────────────────────────────────────────────────
+SET DOWNLOADER=
+
+curl --version >nul 2>&1
+IF NOT ERRORLEVEL 1 (
+    SET DOWNLOADER=curl
+    echo [OK] Downloader: curl
+    goto :python_check
+)
+
+bitsadmin /? >nul 2>&1
+IF NOT ERRORLEVEL 1 (
+    SET DOWNLOADER=bitsadmin
+    echo [OK] Downloader: bitsadmin
+    goto :python_check
+)
+
+powershell -Command "exit 0" >nul 2>&1
+IF NOT ERRORLEVEL 1 (
+    SET DOWNLOADER=powershell
+    echo [OK] Downloader: powershell
+    goto :python_check
+)
+
+echo [ERROR] No download tool found.
+echo         curl / bitsadmin / powershell all missing.
+echo         Please download Python 3.11.9 manually:
+echo         https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
+echo         Extract it to: %PY_DIR%\
+echo         Then re-run this script.
+pause & exit /b 1
+
+:: ─────────────────────────────────────────────────────────────
+:: DOWNLOAD SUBROUTINE
+:: Usage: call :download  URL  OUTPUTFILE
+:: ─────────────────────────────────────────────────────────────
+:download
+SET _URL=%~1
+SET _OUT=%~2
+
+IF "%DOWNLOADER%"=="curl" (
+    curl -L --progress-bar -o "%_OUT%" "%_URL%"
+    goto :download_done
+)
+IF "%DOWNLOADER%"=="bitsadmin" (
+    bitsadmin /transfer DiagramAI_Download /download /priority normal "%_URL%" "%_OUT%"
+    goto :download_done
+)
+IF "%DOWNLOADER%"=="powershell" (
+    powershell -Command "& { $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%_URL%' -OutFile '%_OUT%' }"
+    goto :download_done
+)
+
+:download_done
+exit /b 0
+
+:: ─────────────────────────────────────────────────────────────
+:: PYTHON CHECK
+:: ─────────────────────────────────────────────────────────────
+:python_check
+IF EXIST "%PY%" (
+    echo [SKIP] Python already installed
     echo        %PY%
     echo.
-    goto :CHECK_PACKAGES
+    goto :packages
 )
 
-echo [INFO] Embedded Python not found. Installing...
+echo [NEED] Python not found -- downloading Python 3.11.9...
 echo.
 
-if not exist "%PY_DIR%" mkdir "%PY_DIR%"
+IF NOT EXIST "%PY_DIR%" mkdir "%PY_DIR%"
 
-set "PY_ZIP=%ROOT%\python_embed.zip"
+SET PY_ZIP=%ROOT%\py_embed.zip
+SET PY_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
 
-echo [INFO] Downloading Python...
-powershell -Command ^
-"$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip' -OutFile '%PY_ZIP%'"
+call :download "%PY_URL%" "%PY_ZIP%"
 
-if not exist "%PY_ZIP%" (
-    echo [ERROR] Python download failed.
-    pause
-    exit /b 1
+IF NOT EXIST "%PY_ZIP%" (
+    echo.
+    echo [ERROR] Download failed.
+    echo.
+    echo  Download manually from:
+    echo  https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
+    echo.
+    echo  Extract contents into: %PY_DIR%\
+    echo  Then re-run this script.
+    pause & exit /b 1
+)
+echo [OK] Downloaded
+
+:: Extract
+IF "%DOWNLOADER%"=="powershell" (
+    powershell -Command "& { Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('%PY_ZIP%', '%PY_DIR%') }"
+) ELSE (
+    :: curl/bitsadmin machines still have PowerShell for extraction
+    powershell -Command "& { Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('%PY_ZIP%', '%PY_DIR%') }" >nul 2>&1
+    IF ERRORLEVEL 1 (
+        :: Fallback: use tar (available Windows 10 build 17063+)
+        tar -xf "%PY_ZIP%" -C "%PY_DIR%"
+    )
 )
 
-echo [INFO] Extracting Python...
-powershell -Command ^
-"Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('%PY_ZIP%', '%PY_DIR%')"
+del "%PY_ZIP%" >nul 2>&1
 
-del "%PY_ZIP%"
-
-if not exist "%PY%" (
-    echo [ERROR] Python extraction failed.
-    pause
-    exit /b 1
+IF NOT EXIST "%PY%" (
+    echo [ERROR] Extraction failed.
+    echo         Manually extract the zip to: %PY_DIR%\
+    pause & exit /b 1
 )
-
-echo [OK] Embedded Python installed
+echo [OK] Python 3.11.9 extracted
 echo.
 
-:: ============================================================
-:: ENABLE SITE-PACKAGES
-:: ============================================================
-echo [INFO] Enabling site-packages...
-powershell -Command ^
-"$f='%PY_DIR%\python311._pth'; $c=Get-Content $f; $c=$c -replace '#import site','import site'; if ($c -notcontains 'Lib\site-packages') { $c += 'Lib\site-packages' }; Set-Content $f $c"
-
+:: ── Fix _pth ─────────────────────────────────────────────────
+SET PTH=%PY_DIR%\python311._pth
+powershell -Command "& { (Get-Content '%PTH%') -replace '#import site','import site' | Set-Content '%PTH%' }" >nul 2>&1
+IF ERRORLEVEL 1 (
+    :: manual patch fallback using Python itself after extraction
+    "%PY%" -c "f=open(r'%PTH%');c=f.read();f.close();f=open(r'%PTH%','w');f.write(c.replace('#import site','import site'));f.close()"
+)
 echo [OK] site-packages enabled
 echo.
 
-:: ============================================================
-:: INSTALL PIP
-:: ============================================================
-echo [INFO] Installing pip...
-powershell -Command ^
-"$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%ROOT%\get-pip.py'"
+:: ── Install pip ──────────────────────────────────────────────
+SET GETPIP=%ROOT%\get-pip.py
+call :download "https://bootstrap.pypa.io/get-pip.py" "%GETPIP%"
 
-"%PY%" "%ROOT%\get-pip.py" --quiet
-del "%ROOT%\get-pip.py"
+IF NOT EXIST "%GETPIP%" (
+    echo [ERROR] Failed to download get-pip.py
+    pause & exit /b 1
+)
 
+"%PY%" "%GETPIP%" --quiet
+del "%GETPIP%" >nul 2>&1
 "%PY%" -m pip install --upgrade pip --quiet
-
 echo [OK] pip installed
 echo.
 
-:: ============================================================
-:: CHECK REQUIRED PACKAGES
-:: ============================================================
-:CHECK_PACKAGES
-
-set "INSTALL_LIST="
-set /a SKIP=0
-set /a NEED=0
-
-call :CHECK fastapi fastapi
-call :CHECK uvicorn uvicorn
-call :CHECK multipart python-multipart
-call :CHECK aiofiles aiofiles
-call :CHECK fitz PyMuPDF
-call :CHECK faiss faiss-cpu
-call :CHECK numpy numpy
-call :CHECK pydantic pydantic
-call :CHECK rank_bm25 rank-bm25
-call :CHECK docx python-docx
-
-echo.
-echo Packages already installed : %SKIP%
-echo Packages to install       : %NEED%
+:: ─────────────────────────────────────────────────────────────
+:: PACKAGES — check site-packages folder, skip if exists
+:: ─────────────────────────────────────────────────────────────
+:packages
+echo Checking packages...
 echo.
 
-if defined INSTALL_LIST (
-    echo [INFO] Installing missing packages...
+IF NOT EXIST "%WHEELS%" mkdir "%WHEELS%"
+IF NOT EXIST "%SITE%"   mkdir "%SITE%"
+
+SET INSTALL_LIST=
+SET SKIP=0
+SET NEED=0
+
+call :chk  fastapi        "fastapi>=0.110.0"
+call :chk  uvicorn        "uvicorn>=0.29.0"
+call :chk  multipart      "python-multipart>=0.0.9"
+call :chk  aiofiles       "aiofiles>=23.0.0"
+call :chk  fitz           "PyMuPDF>=1.23.0"
+call :chk  faiss          "faiss-cpu>=1.7.4"
+call :chk  numpy          "numpy>=1.24.0,<2.0.0"
+call :chk  pydantic       "pydantic>=2.0.0"
+call :chk  rank_bm25      "rank-bm25>=0.2.2"
+call :chk  docx           "python-docx"
+
+echo.
+echo   Skipped : %SKIP%   ^|   To install : %NEED%
+echo.
+
+IF DEFINED INSTALL_LIST (
+    echo Installing missing packages...
     "%PY%" -m pip install %INSTALL_LIST%
-    if errorlevel 1 goto :ERROR
+    IF ERRORLEVEL 1 goto :error
     echo [OK] Packages installed
-) else (
-    echo [OK] All required packages already installed
+    echo.
+)
+
+:: ─────────────────────────────────────────────────────────────
+:: LLAMA-CPP
+:: ─────────────────────────────────────────────────────────────
+IF EXIST "%SITE%\llama_cpp" (
+    echo   [SKIP] llama_cpp  already installed
+) ELSE (
+    echo   [NEED] llama_cpp  -- searching wheel...
+    SET WHEEL_PATH=
+    FOR %%F IN ("%WHEELS%\llama_cpp_python-*.whl") DO SET WHEEL_PATH=%%F
+
+    IF DEFINED WHEEL_PATH (
+        "%PY%" -m pip install "!WHEEL_PATH!"
+        IF ERRORLEVEL 1 goto :error
+        echo   [OK]  llama_cpp installed
+    ) ELSE (
+        echo.
+        echo  ┌──────────────────────────────────────────────────────┐
+        echo  │  WHEEL NOT FOUND                                     │
+        echo  │                                                      │
+        echo  │  Download:                                           │
+        echo  │  github.com/abetlen/llama-cpp-python/releases        │
+        echo  │  Tag  : v0.2.90                                      │
+        echo  │  File : llama_cpp_python-0.2.90-cp311-cp311-         │
+        echo  │         win_amd64.whl                                │
+        echo  │  Save to : %ROOT%\wheels\          │
+        echo  └──────────────────────────────────────────────────────┘
+        echo.
+        pause & exit /b 1
+    )
 )
 
 echo.
-
-:: ============================================================
-:: INSTALL LLAMA_CPP IF MISSING
-:: ============================================================
-"%PY%" -c "import llama_cpp" >nul 2>&1
-if not errorlevel 1 (
-    echo [SKIP] llama_cpp already installed
-    goto :DONE
-)
-
-echo [INFO] llama_cpp not installed
-set "WHEEL_FILE="
-
-for %%F in ("%WHEELS%\llama_cpp_python-*.whl") do (
-    set "WHEEL_FILE=%%F"
-)
-
-if not defined WHEEL_FILE (
-    echo.
-    echo [ERROR] llama_cpp wheel not found
-    echo Place wheel in:
-    echo %WHEELS%
-    echo.
-    pause
-    exit /b 1
-)
-
-echo [INFO] Installing llama_cpp...
-"%PY%" -m pip install "!WHEEL_FILE!"
-if errorlevel 1 goto :ERROR
-
-echo [OK] llama_cpp installed
-echo.
-
-:: ============================================================
-:: DONE
-:: ============================================================
-:DONE
 echo ============================================================
-echo   SETUP COMPLETE
-echo   Put GGUF models in:
-echo   %ROOT%\models\
-echo   Users can now run run.bat
+echo   ALL DONE -- Pendrive ready for any Windows laptop
+echo   Models folder : %ROOT%\models\
+echo   Users run     : start.bat
 echo ============================================================
 echo.
 pause
 exit /b 0
 
-:: ============================================================
-:: PACKAGE CHECK SUBROUTINE
-:: %1 = import name
-:: %2 = pip package name
-:: ============================================================
-:CHECK
-"%PY%" -c "import %~1" >nul 2>&1
-if not errorlevel 1 (
-    echo [SKIP] %~2
-    set /a SKIP+=1
-) else (
-    echo [NEED] %~2
-    set "INSTALL_LIST=!INSTALL_LIST! %~2"
-    set /a NEED+=1
+:: ─────────────────────────────────────────────────────────────
+:: SUBROUTINES
+:: ─────────────────────────────────────────────────────────────
+:chk
+IF EXIST "%SITE%\%~1" (
+    echo   [SKIP] %~1
+    SET /A SKIP+=1
+) ELSE (
+    echo   [NEED] %~1
+    SET INSTALL_LIST=!INSTALL_LIST! %~2
+    SET /A NEED+=1
 )
 exit /b 0
 
-:ERROR
+:error
 echo.
-echo [ERROR] Installation failed.
+echo [ERROR] Install failed -- try running as Administrator
 pause
 exit /b 1
-```
