@@ -106,8 +106,7 @@ def load_model():
 # ── Improvement 1: Diagram prompts with 3 examples each ───────────────────────
 
 DIAGRAM_PROMPTS = {
-    "flowchart TD": """Output ONLY a Mermaid flowchart code block. Nothing else.
-Start with ```mermaid, end with ```.
+    "flowchart TD": """Output ONLY a Mermaid flowchart code block. NO explanation before or after. Start with ```mermaid, end with ```.
 
 Example 1 — login flow:
 ```mermaid
@@ -143,8 +142,7 @@ flowchart TD
     F --> G[Deploy prod]
 ```
 Now generate a flowchart for:""",
-    "sequenceDiagram": """Output ONLY a Mermaid sequenceDiagram block. Nothing else.
-Start with ```mermaid, end with ```.
+    "sequenceDiagram": """Output ONLY a Mermaid sequenceDiagram code block. NO explanation before or after. Start with ```mermaid, end with ```.
 
 Example 1 — login API:
 ```mermaid
@@ -210,8 +208,7 @@ erDiagram
     TEACHER ||--o{ COURSE : teaches
 ```
 Now generate an ER diagram for:""",
-    "classDiagram": """Output ONLY a Mermaid classDiagram block. Nothing else.
-Start with ```mermaid, end with ```.
+    "classDiagram": """Output ONLY a Mermaid classDiagram code block. NO explanation before or after. Start with ```mermaid, end with ```.
 
 Example 1 — animals:
 ```mermaid
@@ -235,8 +232,7 @@ classDiagram
     Truck : +int payload
 ```
 Now generate a class diagram for:""",
-    "stateDiagram-v2": """Output ONLY a Mermaid stateDiagram-v2 block. Nothing else.
-Start with ```mermaid, end with ```.
+    "stateDiagram-v2": """Output ONLY a Mermaid stateDiagram-v2 code block. NO explanation before or after. Start with ```mermaid, end with ```.
 
 Example 1 — order:
 ```mermaid
@@ -257,14 +253,115 @@ stateDiagram-v2
     Yellow --> Red : timer
 ```
 Now generate a state diagram for:""",
+    "gantt": """Output ONLY a Mermaid gantt chart code block. NO explanation before or after. Start with ```mermaid, end with ```.
+
+Example 1 — software project:
+```mermaid
+gantt
+    title Software Development
+    dateFormat  YYYY-MM-DD
+    section Planning
+    Requirements      :a1, 2024-01-01, 10d
+    Design           :a2, after a1, 7d
+    section Implementation
+    Backend          :b1, after a2, 14d
+    Frontend         :b2, after a2, 12d
+    section Testing
+    Integration      :c1, after b1, 5d
+    UAT              :c2, after b1, 5d
+```
+
+Example 2 — construction:
+```mermaid
+gantt
+    title Building House
+    dateFormat  YYYY-MM-DD
+    section Foundation
+    Excavation      :f1, 2024-01-01, 5d
+    Concrete        :f2, after f1, 3d
+    section Frame
+    Framing         :f3, after f2, 10d
+    Roofing         :f4, after f3, 5d
+```
+Now generate a Gantt chart for:""",
+    "pie": """Output ONLY a Mermaid pie chart code block. NO explanation before or after. Start with ```mermaid, end with ```.
+
+Example 1 — market share:
+```mermaid
+pie title Market Share
+    "Company A" : 35
+    "Company B" : 25
+    "Company C" : 20
+    "Others" : 20
+```
+
+Example 2 — budget allocation:
+```mermaid
+pie title Budget 2024
+    "Development" : 40
+    "Marketing" : 25
+    "Operations" : 20
+    "Admin" : 15
+```
+Now generate a pie chart for:""",
+    "mindmap": """Output ONLY a Mermaid mindmap code block. NO explanation before or after. Start with ```mermaid, end with ```.
+
+Example 1 — project planning:
+```mermaid
+mindmap
+  root((Project X))
+    Planning
+      Requirements
+      Timeline
+      Resources
+    Development
+      Backend
+      Frontend
+      Database
+    Testing
+      Unit Tests
+      Integration
+    Deployment
+      Staging
+      Production
+```
+
+Example 2 — problem analysis:
+```mermaid
+mindmap
+  root((System Issue))
+    Symptoms
+      Slow response
+      Timeouts
+      Errors
+    Causes
+      Network latency
+      CPU spike
+      Memory leak
+    Solutions
+      Optimize queries
+      Scale hardware
+      Patch bug
+```
+Now generate a mindmap for:""",
 }
 
 GENERAL_SYSTEM = """You are a helpful AI assistant.
+
+STRUCTURE YOUR RESPONSE as follows:
+1. First: A brief paragraph (2-3 sentences) summarizing the answer
+2. Then: Point-by-point details using bullet points if applicable
+
 Answer clearly and concisely in under 200 words.
 If unsure, say you don't know.
 """
 
 DOC_SYSTEM = """You are a reading assistant.
+
+STRUCTURE YOUR RESPONSE as follows:
+1. First: A brief paragraph (2-3 sentences) summarizing the answer based on the document
+2. Then: Point-by-point details using bullet points if applicable
+
 Answer using ONLY the document excerpts provided.
 If not found say: 'The uploaded document does not cover this topic.'
 Mention the document name the answer came from.
@@ -272,29 +369,44 @@ Mention the document name the answer came from.
 
 DOC_DIAGRAM_SYSTEM = """You are a document analysis and diagram generator.
 
-TASK: First analyze the document content, then create a Mermaid diagram from it.
+TASK: Analyze the document content and create a Mermaid diagram that accurately represents the information.
 
-Step 1 - ANALYSIS: Extract from the document:
-- Key entities (actors, objects, modules)
-- Main processes or steps
-- Decisions and conditions
-- Relationships between entities
-- Flow direction (who interacts with whom)
+STEP 1 - EXTRACT from the document:
+• Entities: people, systems, modules, components, roles (e.g., user, admin, server)
+• Processes: actions, operations, workflows (e.g., create, validate, process)
+• Decisions: conditional logic, branches, checkpoints
+• Relationships: connections, dependencies, ownership, flows
+• Data structures: tables, fields, schemas (for ER diagrams)
+• States: lifecycle stages, status changes (for state diagrams)
+• Interactions: messages, calls, requests (for sequence diagrams)
 
-Step 2 - DIAGRAM: Create a Mermaid diagram that represents:
-- For processes/flows: flowchart TD
-- For sequences: sequenceDiagram  
-- For data/tables: erDiagram
-- For classes: classDiagram
-- For states: stateDiagram-v2
+STEP 2 - CHOOSE diagram type based on content:
+• flowchart TD → processes, workflows, system architecture, data flow
+• sequenceDiagram → message sequences, API calls, step-by-step interactions
+• erDiagram → database tables, data models, entity relationships
+• classDiagram → object-oriented structures, classes with attributes/methods
+• stateDiagram-v2 → state machines, lifecycles, status transitions
 
-IMPORTANT: 
-- Use ONLY information from the document
-- If document mentions "user", "customer", "admin" → add as nodes
-- If document mentions create/read/update/delete → add as process steps
-- If document shows relationships → add arrows
+STEP 3 - BUILD the diagram:
+• Include ALL key entities from the document
+• Show DIRECTION of flow (--> or --->)
+• Add MEANINGFUL labels on arrows describing the action
+• Use SQUARE BRACKETS for nodes: NodeName[Label]
+• Keep node labels concise (3-5 words max)
+• Group related steps with subgraphs if helpful
 
-Output ONLY the Mermaid code block starting with ```mermaid and ending with ```.
+CRITICAL RULES:
+✗ DO NOT invent information not in the document
+✓ ONLY use facts from the provided document excerpts
+✓ If document mentions "user logs in" → include user, login, authentication nodes
+✓ If document shows data flow → trace the complete path
+✓ If document describes multiple scenarios → choose the most important one
+
+OUTPUT FORMAT:
+Return ONLY the Mermaid code block. No explanations.
+```mermaid
+<diagram code here>
+```
 """
 
 
@@ -314,11 +426,30 @@ MERMAID_STARTERS = [
 
 
 def _is_valid_mermaid(text: str) -> bool:
-    """Check if text contains a valid Mermaid block."""
+    """Check if text contains a valid Mermaid diagram."""
     lower = text.lower()
-    has_fence = "```mermaid" in lower or "```" in lower
-    has_syntax = any(s in lower for s in MERMAID_STARTERS)
-    return has_fence and has_syntax
+    # Must have mermaid code block or at least diagram syntax
+    has_mermaid_fence = "```mermaid" in lower
+    has_any_fence = "```" in lower
+    # Check for any valid Mermaid diagram type
+    has_diagram_type = any(
+        re.search(rf"\b{re.escape(starter)}\b", lower)
+        for starter in [
+            "flowchart",
+            "graph ",
+            "sequencediagram",
+            "erdiagram",
+            "classdiagram",
+            "statediagram",
+            "gantt",
+            "pie",
+            "mindmap",
+        ]
+    )
+    # Accept if has mermaid fence + diagram, OR any fence + diagram (implied mermaid)
+    return (has_mermaid_fence and has_diagram_type) or (
+        has_any_fence and has_diagram_type
+    )
 
 
 def _extract_or_fix(text: str) -> str:
@@ -331,9 +462,9 @@ def _extract_or_fix(text: str) -> str:
     if m:
         return "```mermaid\n" + m.group(1).strip() + "\n```"
 
-    # Has ``` fence but no mermaid label
+    # Has ``` fence but no mermaid label - match any diagram type
     m = re.search(
-        r"```\s*(flowchart|graph|sequenceDiagram|erDiagram|classDiagram|stateDiagram)([\s\S]*?)```",
+        r"```\s*(flowchart|graph|sequenceDiagram|erDiagram|classDiagram|stateDiagram|stateDiagram-v2|gantt|pie|mindmap)([\s\S]*?)```",
         text,
         re.IGNORECASE,
     )
@@ -349,6 +480,10 @@ def _extract_or_fix(text: str) -> str:
         "erDiagram",
         "classDiagram",
         "stateDiagram",
+        "stateDiagram-v2",
+        "gantt",
+        "pie",
+        "mindmap",
     ]:
         if stripped.lower().startswith(starter.lower()):
             return "```mermaid\n" + stripped + "\n```"
@@ -375,39 +510,49 @@ def generate(
                 f"User request: {prompt}\n"
                 f"Extract key information from the document above and create a {diagram_type} diagram.\n"
                 f"<|end|>\n"
-                f"<|assistant|>\n```mermaid\n"
+                f"<|assistant|>\n"
             )
         else:
             system = DIAGRAM_PROMPTS.get(diagram_type, DIAGRAM_PROMPTS["flowchart TD"])
             full_prompt = (
                 f"<|system|>\n{system}<|end|>\n"
                 f"<|user|>\n{prompt}<|end|>\n"
-                f"<|assistant|>\n```mermaid\n"
+                f"<|assistant|>\n"
             )
+
+        # Adjust generation parameters based on whether we have context
+        temp = 0.05 if context else 0.15
+        max_tokens = 768 if context else 512
 
         result = llm(
             full_prompt,
-            max_tokens=512,
-            temperature=0.1,
+            max_tokens=max_tokens,
+            temperature=temp,
             stop=["<|end|>", "<|user|>"],
             echo=False,
         )
-        output = "```mermaid\n" + result["choices"][0]["text"].strip()
+        raw_output = result["choices"][0]["text"].strip()
+        extracted = _extract_or_fix(raw_output)
 
-        # Improvement 2: validate — retry once if invalid
-        if not _is_valid_mermaid(output):
+        # Validate — retry up to 2 times if invalid
+        if not _is_valid_mermaid(extracted):
             print("[LLM] Invalid Mermaid output — retrying...")
-            result2 = llm(
-                full_prompt,
-                max_tokens=512,
-                temperature=0.3,
-                stop=["<|end|>", "<|user|>"],
-                echo=False,
-            )
-            output2 = "```mermaid\n" + result2["choices"][0]["text"].strip()
-            output = output2 if _is_valid_mermaid(output2) else output
+            for attempt in range(2):
+                result2 = llm(
+                    full_prompt,
+                    max_tokens=max_tokens,
+                    temperature=0.25,
+                    stop=["<|end|>", "<|user|>"],
+                    echo=False,
+                )
+                raw_output2 = result2["choices"][0]["text"].strip()
+                extracted2 = _extract_or_fix(raw_output2)
+                if _is_valid_mermaid(extracted2):
+                    return extracted2
+            # All retries failed, return best attempt
+            print("[LLM] All retries produced invalid Mermaid")
 
-        return _extract_or_fix(output)
+        return extracted
 
     # ── Q&A with documents ────────────────────────────────────────────────────
     if context:

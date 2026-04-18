@@ -619,7 +619,7 @@
     wrapper.appendChild(badge);
 
     if (mode === 'diagram') {
-      const mermaidCode = extractMermaid(response);
+      const { mermaidCode, extraText } = extractMermaidWithText(response);
 
       if (mermaidCode) {
         const wrapper2 = document.createElement('div');
@@ -647,6 +647,15 @@
           errMsg.style.cssText = 'font-size:13px;color:#c2414c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;';
           errMsg.textContent = 'Could not render diagram. Try rephrasing your request.';
           wrapper2.appendChild(errMsg);
+        }
+
+        if (extraText) {
+          const explanation = document.createElement('div');
+          explanation.className = 'bubble';
+          explanation.style.marginTop = '12px';
+          explanation.style.fontSize = '13px';
+          explanation.textContent = extraText;
+          wrapper.appendChild(explanation);
         }
 
       } else {
@@ -685,6 +694,37 @@
     }
 
     return null;
+  }
+
+  function extractMermaidWithText(text) {
+    let cleaned = text.replace(/^(?:(?:here(?:'?s| is)?(?: a|n)?|below|here is(?: the)?|following)(?: diagram| chart| flow| schema)?:?\s*)+/gi, '');
+    cleaned = cleaned.replace(/^(?:```mermaid\s*\n?)+/gi, '');
+
+    const fencedMatch = cleaned.match(/```mermaid\s*([\s\S]*?)```/i);
+    if (fencedMatch) {
+      const code = fencedMatch[1].trim();
+      const beforeCode = cleaned.substring(0, fencedMatch.index).trim();
+      const afterCode = cleaned.substring(fencedMatch.index + fencedMatch[0].length).trim();
+      const extra = beforeCode || afterCode;
+      return { mermaidCode: code, extraText: extra || null };
+    }
+
+    const plainMatch = cleaned.match(/```\s*(flowchart|graph|sequenceDiagram|classDiagram|erDiagram|stateDiagram|gantt|pie|mindmap)([\s\S]*?)```/i);
+    if (plainMatch) {
+      const code = (plainMatch[1] + plainMatch[2]).trim();
+      const beforeCode = cleaned.substring(0, plainMatch.index).trim();
+      const afterCode = cleaned.substring(plainMatch.index + plainMatch[0].length).trim();
+      const extra = beforeCode || afterCode;
+      return { mermaidCode: code, extraText: extra || null };
+    }
+
+    const trimmed = cleaned.trim();
+    const diagramMatch = trimmed.match(/^(flowchart|graph|sequenceDiagram|classDiagram|erDiagram|stateDiagram|gantt|pie|mindmap)[\s\S]*$/i);
+    if (diagramMatch) {
+      return { mermaidCode: trimmed, extraText: null };
+    }
+
+    return { mermaidCode: null, extraText: null };
   }
 
   // ── Helper elements ─────────────────────────────────────

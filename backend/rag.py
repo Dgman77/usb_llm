@@ -33,25 +33,42 @@ def _tokenize(text: str):
 
 
 # ── Sentence chunking ────────────────────────────────
-def chunk_text(text: str, max_chars: int = 500):
-    sentences = re.split(r"(?<=[.?!])\s+|\n{2,}", text)
-    chunks, current = [], ""
+def chunk_text(text: str, max_chars: int = 600):
+    """
+    Chunk text into meaningful segments.
+    For diagrams, larger chunks (600 chars) help capture complete entities.
+    """
+    # Split by double newlines first (paragraphs), then by sentences
+    paragraphs = re.split(r"\n\s*\n", text)
+    chunks = []
 
-    for sent in sentences:
-        sent = sent.strip()
-        if not sent:
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
             continue
-        if len(current) + len(sent) < max_chars:
-            current += " " + sent
+
+        # If paragraph is small, add it directly
+        if len(para) <= max_chars:
+            chunks.append(para)
         else:
+            # Split long paragraphs by sentences
+            sentences = re.split(r"(?<=[.?!])\s+", para)
+            current = ""
+            for sent in sentences:
+                sent = sent.strip()
+                if not sent:
+                    continue
+                if len(current) + len(sent) + 1 <= max_chars:
+                    current += (" " + sent) if current else sent
+                else:
+                    if current:
+                        chunks.append(current.strip())
+                    current = sent
             if current:
                 chunks.append(current.strip())
-            current = sent
 
-    if current:
-        chunks.append(current.strip())
-
-    return chunks
+    # Ensure we have chunks
+    return chunks if chunks else [text[:max_chars]]
 
 
 # ── Build Hybrid Index ──────────────────────────────
@@ -221,19 +238,23 @@ def search(query: str, top_k: int = 5) -> str:
     bm25_scores = np.array(_bm25.get_scores(tokens))
 
     q_vec = _vectorize_query(tokens)
-    faiss_scores, faiss_idx = _faiss_index.search(q_vec.reshape(1, -1), 20)
+    faiss_scores, faiss_idx = _faiss_index.search(
+        q_vec.reshape(1, -1), min(20, len(_chunks))
+    )
 
     combined: dict[int, float] = {}
+    # Weight FAISS (semantic) higher for conceptual queries, BM25 (lexical) for specific terms
     for score, idx in zip(faiss_scores[0], faiss_idx[0]):
-        combined[idx] = combined.get(idx, 0) + float(score) * 0.6
+        combined[idx] = combined.get(idx, 0) + float(score) * 0.5
     for i, s in enumerate(bm25_scores):
-        combined[i] = combined.get(i, 0) + float(s) * 0.4
+        combined[i] = combined.get(i, 0) + float(s) * 0.5
 
     ranked = sorted(combined.items(), key=lambda x: x[1], reverse=True)
 
     selected, seen_text = [], set()
     for idx, _ in ranked:
-        key = _chunks[idx][:80]
+        # Deduplicate by first 100 chars (more aggressive)
+        key = _chunks[idx][:100]
         if key in seen_text:
             continue
         selected.append(idx)
@@ -241,20 +262,22 @@ def search(query: str, top_k: int = 5) -> str:
         if len(selected) >= top_k:
             break
 
-    MAX_CHARS = 1500
+    if not selected:
+        return ""
+
+    MAX_CHARS = 2000  # Increased from 1500 for more diagram detail
     final = ""
     best_score = ranked[0][1] if ranked else 0
 
     for i in selected:
-        part = (
-            f"[From: {_chunk_doc[i]}, page {_chunk_page[i]}]\n{_chunks[i]}\n\n---\n\n"
-        )
+        part = f"[Document: {_chunk_doc[i]}, page {_chunk_page[i]}]\n{_chunks[i]}\n\n"
         if len(final) + len(part) > MAX_CHARS:
             break
         final += part
 
-    if best_score < 0.05:
-        final = "[LOW CONFIDENCE]\n\n" + final
+    # Lower confidence threshold since score distribution changed
+    if best_score < 0.02:
+        final = "[Note: Low relevance to query]\n\n" + final
 
     return final.strip()
 

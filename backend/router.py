@@ -17,6 +17,7 @@ DIAGRAM_TYPES = {
         "message",
         "sends to",
         "calls",
+        "interaction",
     ],
     "erDiagram": [
         "database",
@@ -28,6 +29,7 @@ DIAGRAM_TYPES = {
         "sql",
         "db design",
         "data model",
+        "relationship",
     ],
     "classDiagram": [
         "class",
@@ -38,6 +40,8 @@ DIAGRAM_TYPES = {
         "interface",
         "extends",
         "implements",
+        "method",
+        "attribute",
     ],
     "stateDiagram-v2": [
         "state",
@@ -46,6 +50,35 @@ DIAGRAM_TYPES = {
         "lifecycle",
         "state machine",
         "states",
+        "workflow state",
+    ],
+    "gantt": [
+        "gantt",
+        "timeline",
+        "schedule",
+        "project plan",
+        "milestone",
+        "deadline",
+        "duration",
+        "phase",
+    ],
+    "pie": [
+        "pie chart",
+        "distribution",
+        "percentage",
+        "breakdown",
+        "proportion",
+        "statistics",
+        "data distribution",
+    ],
+    "mindmap": [
+        "mindmap",
+        "mind map",
+        "brainstorm",
+        "idea",
+        "concept",
+        "central idea",
+        "branches",
     ],
     "flowchart TD": [
         "draw",
@@ -70,9 +103,7 @@ DIAGRAM_TYPES = {
         "process flow",
         "design",
         "show me",
-        "mindmap",
-        "gantt",
-        "pie chart",
+        "diagram of",
     ],
 }
 
@@ -112,7 +143,7 @@ def user_wants_doc_to_diagram(user_message: str) -> bool:
     # Also check if "diagram" is requested AND user mentions "document"/"file"/"upload"
     diagram_requested = any(kw in msg for kw in ALL_DIAGRAM_KEYWORDS)
     doc_reference = any(
-        kw in msg for kw in ["document", "file", "upload", "pdf", "docx", "my"]
+        kw in msg for kw in ["document", "file", "upload", "pdf", "docx"]
     )
     return diagram_requested and doc_reference
 
