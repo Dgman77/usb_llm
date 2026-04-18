@@ -5,7 +5,7 @@
 ```
 USB_DRIVE:\ [format you usb to 'exfat' file system]
 ├── start.bat                 ← Double-click to START
-├── dev_install.bat           ← Run ONCE to download portable Python and it packages
+├── dev_install.bat           ← Run ONCE to download portable Python and it packages(needs internet)
 ├── wait_for_server.py
 │
 ├── python\           ← python and packages (optional)
@@ -22,7 +22,7 @@ USB_DRIVE:\ [format you usb to 'exfat' file system]
 │   ├── index.html
 │   └── mermaid.min.js
 ├── wheels\
-│   ├── illama.cpp whl for no need to compile  theme .
+│   ├── illama.cpp whl for no need to compile  theme . because it is precompiled
 │  
 │
 ├── models\
