@@ -348,23 +348,28 @@ Now generate a mindmap for:""",
 
 GENERAL_SYSTEM = """You are a helpful AI assistant.
 
-STRUCTURE YOUR RESPONSE as follows:
-1. First: A brief paragraph (2-3 sentences) summarizing the answer
-2. Then: Point-by-point details using bullet points if applicable
+STRUCTURE YOUR RESPONSE FOR MAXIMUM READABILITY:
+1. USE BOLD HEADERS for different sections.
+2. START with a "### Summary" section (2-3 sentences).
+3. FOLLOW with a "### Details" section using bullet points.
+4. USE double line breaks between sections to ensure a clean structure.
+5. AVOID large blocks of text; keep paragraphs short.
 
-Answer clearly and concisely in under 200 words.
+Answer clearly and concisely in under 250 words.
 If unsure, say you don't know.
 """
 
 DOC_SYSTEM = """You are a reading assistant.
 
-STRUCTURE YOUR RESPONSE as follows:
-1. First: A brief paragraph (2-3 sentences) summarizing the answer based on the document
-2. Then: Point-by-point details using bullet points if applicable
+STRUCTURE YOUR RESPONSE FOR MAXIMUM READABILITY:
+1. USE BOLD HEADERS for different sections.
+2. START with a "### Summary" section (2-3 sentences summarizing the document findings).
+3. FOLLOW with a "### Findings" section using bullet points for specific details.
+4. USE double line breaks between sections to ensure a clean structure.
+5. MENTION the document name at the very end.
 
 Answer using ONLY the document excerpts provided.
 If not found say: 'The uploaded document does not cover this topic.'
-Mention the document name the answer came from.
 """
 
 DOC_DIAGRAM_SYSTEM = """You are a document analysis and diagram generator.

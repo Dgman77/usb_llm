@@ -11,7 +11,7 @@ WAITER="$ROOT/wait_for_server.py"
 
 echo
 echo "==============================================="
-echo "  DiagramAI -- Offline AI (Portable Mode)"
+echo "  Flash AI with RAG  -- Offline AI (Portable Mode)"
 echo "==============================================="
 echo
 echo "USB Drive : $DRIVE"
@@ -84,8 +84,8 @@ fi
 echo "[OK] Model: $MODEL_PATH"
 echo "$MODEL_PATH" > "$ROOT/models/model_path.txt"
 
-export DIAGRAMAI_MODEL="$MODEL_PATH"
-export DIAGRAMAI_ROOT="$ROOT"
+export Flash AI with RAG _MODEL="$MODEL_PATH"
+export Flash AI with RAG _ROOT="$ROOT"
 
 echo
 

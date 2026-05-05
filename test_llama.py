@@ -12,7 +12,7 @@ import os
 
 print()
 print("=" * 55)
-print("  DiagramAI — llama.cpp Diagnostic Test")
+print("  Flash AI with RAG  — llama.cpp Diagnostic Test")
 print("=" * 55)
 print()
 
@@ -164,6 +164,6 @@ except Exception as e:
 print()
 print("=" * 55)
 print("  All tests passed! llama.cpp is working correctly.")
-print("  You can now run start.bat to launch DiagramAI.")
+print("  You can now run start.bat to launch Flash AI with RAG .")
 print("=" * 55)
 print()

@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-title DiagramAI -- CLI Chat
+title Flash AI with RAG  -- CLI Chat
 color 0A
 
 set "ROOT=%~dp0"
@@ -9,7 +9,7 @@ set "DRIVE=%ROOT:~0,2%"
 
 echo.
 echo  ================================================
-echo   DiagramAI  --  CLI Chat
+echo   Flash AI with RAG   --  CLI Chat
 echo  ================================================
 echo.
 

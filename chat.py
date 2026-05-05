@@ -1,5 +1,5 @@
 """
-chat.py - CLI Chat Interface for DiagramAI
+chat.py - CLI Chat Interface for Flash AI with RAG 
 Run directly: python chat.py
 Or: .myenv\Scripts\python.exe chat.py
 """
@@ -17,7 +17,7 @@ from llm import load_model, generate
 
 def main():
     print("\n" + "=" * 50)
-    print("  DiagramAI  --  CLI Chat")
+    print("  Flash AI with RAG   --  CLI Chat")
     print("=" * 50)
     print("\nType 'exit' to quit, 'clear' to clear screen\n")
 
@@ -36,7 +36,7 @@ def main():
                 break
             if user_input.lower() == "clear":
                 print("\n" + "=" * 50)
-                print("  DiagramAI  --  CLI Chat")
+                print("  Flash AI with RAG   --  CLI Chat")
                 print("=" * 50)
                 print()
                 continue

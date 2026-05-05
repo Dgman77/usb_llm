@@ -1,11 +1,11 @@
-# DiagramAI — Offline Pendrive Setup
+# Flash AI with RAG  — Offline Pendrive Setup
 
 ## Folder Structure
 
 ```
 USB_DRIVE:\ [format you usb to 'exfat' file system]
 ├── start.bat                 ← Double-click to START
-├── dev_install.bat           ← Run ONCE to download portable Python and it packages(needs internet)
+├── setup.bat                 ← Run ONCE to download portable Python and its packages (needs internet)
 ├── wait_for_server.py
 │
 ├── python\           ← python and packages (optional)
@@ -36,9 +36,9 @@ USB_DRIVE:\ [format you usb to 'exfat' file system]
 ## Quick Start
 # Fully portable (recommended)
 1. Copy to USB
-2. Double-click dev_install.bat (needs internet once)(i think no need if  a github repository have python.zip)
+2. Double-click setup.bat (needs internet once)
 3. Double-click start.bat
-4. iff you need test you chat model cleck the chat.bat file
+4. If you need to test your chat model, check the chat.bat file
 
 # after that you need on internet.
 

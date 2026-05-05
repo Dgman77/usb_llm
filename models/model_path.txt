@@ -1,1 +1,1 @@
-models\Phi-3-mini-4k-instruct-q4.gguf
+C:\usb\usb_llm\models\qwen2.5-1.5b-instruct-fp16.gguf

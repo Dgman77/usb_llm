@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-title DiagramAI -- Offline AI
+title Flash AI with RAG  -- Offline AI
 color 0A
 
 REM ─────────────────────────────────────────────
@@ -15,7 +15,7 @@ SET WAITER=%ROOT%\wait_for_server.py
 
 echo.
 echo ===============================================
-echo   DiagramAI -- Offline AI (Portable Mode)
+echo   Flash AI with RAG  -- Offline AI (Portable Mode)
 echo ===============================================
 echo.
 echo USB Drive : %DRIVE%
@@ -101,8 +101,8 @@ REM Save for next run
 (echo !MODEL_PATH!) > "%ROOT%\models\model_path.txt"
 
 REM Pass to backend
-SET DIAGRAMAI_MODEL=!MODEL_PATH!
-SET DIAGRAMAI_ROOT=%ROOT%
+SET Flash AI with RAG _MODEL=!MODEL_PATH!
+SET Flash AI with RAG _ROOT=%ROOT%
 
 echo.
 

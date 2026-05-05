@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     print("[Server] Stopped.")
 
 
-app = FastAPI(title="DiagramAI", lifespan=lifespan)
+app = FastAPI(title="Flash AI with RAG ", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
