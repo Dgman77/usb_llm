@@ -106,244 +106,218 @@ def load_model():
 # ── Improvement 1: Diagram prompts with 3 examples each ───────────────────────
 
 DIAGRAM_PROMPTS = {
-    "flowchart TD": """Output ONLY a Mermaid flowchart code block. NO explanation before or after. Start with ```mermaid, end with ```.
+    "flowchart TD": """Output ONLY a Mermaid flowchart. Start with ```mermaid, end with ```.
 
-Example 1 — login flow:
+CRITICAL RULES:
+- NEVER use generic labels like "Start", "End", "Decision", "Process", "Action", "Step 1", "Create", "Send"
+- Every node MUST have a SPECIFIC label describing the ACTUAL thing (e.g. "User submits login form" not "Start")
+- Every arrow label MUST describe the ACTUAL action (e.g. "validates password" not "Yes/No")
+- Include at LEAST 8 nodes with REAL content
+- Use subgraphs to group related steps
+
+Example — e-commerce checkout:
 ```mermaid
 flowchart TD
-    A[Open app] --> B{Logged in?}
-    B -- Yes --> C[Dashboard]
-    B -- No --> D[Login page]
-    D --> E[Enter credentials]
-    E --> F{Valid?}
-    F -- Yes --> C
-    F -- No --> D
+    A[Customer adds items to cart] --> B[Review cart contents]
+    B --> C{Cart total > $50?}
+    C -- Yes --> D[Apply free shipping]
+    C -- No --> E[Calculate shipping fee]
+    D --> F[Enter shipping address]
+    E --> F
+    F --> G[Select payment method]
+    G --> H{Credit card valid?}
+    H -- Yes --> I[Charge payment gateway]
+    H -- No --> J[Show card error message]
+    J --> G
+    I --> K[Generate order confirmation]
+    K --> L[Send confirmation email]
+    L --> M[Update inventory database]
 ```
+Now generate a DETAILED flowchart with SPECIFIC, REAL content for:""",
+    "sequenceDiagram": """Output ONLY a Mermaid sequenceDiagram. Start with ```mermaid, end with ```.
 
-Example 2 — order process:
-```mermaid
-flowchart TD
-    A[Place order] --> B[Payment]
-    B --> C{Payment OK?}
-    C -- Yes --> D[Confirm order]
-    C -- No --> E[Retry payment]
-    D --> F[Ship item]
-    F --> G[Delivered]
-```
+CRITICAL RULES:
+- Use SPECIFIC actor names (e.g. "UserBrowser", "AuthServer", "PaymentDB") not generic "Client", "Server"
+- Every message MUST describe the ACTUAL data or action (e.g. "POST /api/login {email, password}")
+- Include at LEAST 6 message exchanges
+- Show error paths too
 
-Example 3 — CI/CD pipeline:
-```mermaid
-flowchart TD
-    A[Push code] --> B[Run tests]
-    B --> C{Tests pass?}
-    C -- Yes --> D[Build image]
-    C -- No --> E[Notify dev]
-    D --> F[Deploy staging]
-    F --> G[Deploy prod]
-```
-Now generate a flowchart for:""",
-    "sequenceDiagram": """Output ONLY a Mermaid sequenceDiagram code block. NO explanation before or after. Start with ```mermaid, end with ```.
-
-Example 1 — login API:
+Example — user registration:
 ```mermaid
 sequenceDiagram
-    Browser->>Server: POST /login
-    Server->>DB: Check credentials
-    DB-->>Server: User found
-    Server-->>Browser: JWT token
+    UserBrowser->>AuthAPI: POST /register {name, email, password}
+    AuthAPI->>UserDB: SELECT * WHERE email = ?
+    UserDB-->>AuthAPI: No existing user found
+    AuthAPI->>UserDB: INSERT new user record
+    UserDB-->>AuthAPI: User ID 42 created
+    AuthAPI->>EmailService: Send verification email to user
+    EmailService-->>AuthAPI: Email queued successfully
+    AuthAPI-->>UserBrowser: 201 Created {userId, verifyToken}
 ```
+Now generate a DETAILED sequence diagram with SPECIFIC messages for:""",
+    "erDiagram": """Output ONLY a Mermaid erDiagram. Start with ```mermaid, end with ```.
 
-Example 2 — payment:
-```mermaid
-sequenceDiagram
-    App->>PaymentGateway: Charge request
-    PaymentGateway->>Bank: Authorize
-    Bank-->>PaymentGateway: Approved
-    PaymentGateway-->>App: Success
-```
+CRITICAL RULES:
+- Use SPECIFIC table/entity names from the topic
+- Include field definitions with types (int, string, datetime, boolean)
+- Mark PK/FK relationships
+- Include at LEAST 4 entities with fields
 
-Example 3 — file upload:
-```mermaid
-sequenceDiagram
-    Client->>API: Upload file
-    API->>Storage: Save file
-    Storage-->>API: File URL
-    API-->>Client: 200 OK + URL
-```
-Now generate a sequence diagram for:""",
-    "erDiagram": """Output ONLY a Mermaid erDiagram block. Nothing else.
-Start with ```mermaid, end with ```.
-
-Example 1 — blog:
+Example — hospital system:
 ```mermaid
 erDiagram
-    USER ||--o{ POST : writes
-    POST ||--o{ COMMENT : has
-    USER {
-        int id PK
-        string name
-        string email
+    PATIENT ||--o{ APPOINTMENT : books
+    DOCTOR ||--o{ APPOINTMENT : attends
+    DEPARTMENT ||--o{ DOCTOR : employs
+    APPOINTMENT ||--o{ PRESCRIPTION : generates
+    PATIENT {
+        int patient_id PK
+        string full_name
+        datetime date_of_birth
+        string blood_type
+        string phone
     }
-    POST {
-        int id PK
-        int user_id FK
-        string title
-        string content
+    DOCTOR {
+        int doctor_id PK
+        string full_name
+        string specialization
+        int department_id FK
+    }
+    APPOINTMENT {
+        int appointment_id PK
+        int patient_id FK
+        int doctor_id FK
+        datetime scheduled_at
+        string status
     }
 ```
+Now generate a DETAILED ER diagram with SPECIFIC entities and fields for:""",
+    "classDiagram": """Output ONLY a Mermaid classDiagram. Start with ```mermaid, end with ```.
 
-Example 2 — e-commerce:
-```mermaid
-erDiagram
-    CUSTOMER ||--o{ ORDER : places
-    ORDER ||--|{ ORDER_ITEM : contains
-    PRODUCT ||--o{ ORDER_ITEM : included_in
-```
+CRITICAL RULES:
+- Use SPECIFIC class names from the topic
+- Include REAL attributes with types and REAL methods
+- Show inheritance, composition, and associations
+- Include at LEAST 4 classes
 
-Example 3 — school:
-```mermaid
-erDiagram
-    STUDENT ||--o{ ENROLLMENT : has
-    COURSE ||--o{ ENROLLMENT : has
-    TEACHER ||--o{ COURSE : teaches
-```
-Now generate an ER diagram for:""",
-    "classDiagram": """Output ONLY a Mermaid classDiagram code block. NO explanation before or after. Start with ```mermaid, end with ```.
-
-Example 1 — animals:
+Example — online store:
 ```mermaid
 classDiagram
-    Animal <|-- Dog
-    Animal <|-- Cat
-    Animal : +String name
-    Animal : +makeSound()
-    Dog : +fetch()
-    Cat : +purr()
+    Product <|-- PhysicalProduct
+    Product <|-- DigitalProduct
+    ShoppingCart o-- Product
+    Order *-- OrderItem
+    Product : +int productId
+    Product : +String name
+    Product : +float price
+    Product : +getDiscountedPrice()
+    PhysicalProduct : +float weight
+    PhysicalProduct : +calculateShipping()
+    DigitalProduct : +String downloadUrl
+    DigitalProduct : +generateLicense()
+    ShoppingCart : +List~Product~ items
+    ShoppingCart : +addItem(Product)
+    ShoppingCart : +calculateTotal()
 ```
+Now generate a DETAILED class diagram with SPECIFIC classes for:""",
+    "stateDiagram-v2": """Output ONLY a Mermaid stateDiagram-v2. Start with ```mermaid, end with ```.
 
-Example 2 — vehicles:
-```mermaid
-classDiagram
-    Vehicle <|-- Car
-    Vehicle <|-- Truck
-    Vehicle : +String model
-    Vehicle : +start()
-    Car : +int seats
-    Truck : +int payload
-```
-Now generate a class diagram for:""",
-    "stateDiagram-v2": """Output ONLY a Mermaid stateDiagram-v2 code block. NO explanation before or after. Start with ```mermaid, end with ```.
+CRITICAL RULES:
+- Use SPECIFIC state names from the topic (not generic "State1", "State2")
+- Every transition MUST have a SPECIFIC event label
+- Include at LEAST 6 states
 
-Example 1 — order:
-```mermaid
-stateDiagram-v2
-    [*] --> Pending
-    Pending --> Processing : payment received
-    Processing --> Shipped : packed
-    Shipped --> Delivered : arrived
-    Delivered --> [*]
-```
-
-Example 2 — traffic light:
+Example — bug tracking:
 ```mermaid
 stateDiagram-v2
-    [*] --> Red
-    Red --> Green : timer
-    Green --> Yellow : timer
-    Yellow --> Red : timer
+    [*] --> Reported
+    Reported --> Triaged : developer reviews bug
+    Triaged --> InProgress : assigned to developer
+    InProgress --> CodeReview : fix submitted as PR
+    CodeReview --> InProgress : reviewer requests changes
+    CodeReview --> Testing : PR approved and merged
+    Testing --> Verified : QA confirms fix works
+    Testing --> InProgress : QA finds regression
+    Verified --> Closed : deployed to production
+    Closed --> [*]
 ```
-Now generate a state diagram for:""",
-    "gantt": """Output ONLY a Mermaid gantt chart code block. NO explanation before or after. Start with ```mermaid, end with ```.
+Now generate a DETAILED state diagram with SPECIFIC states for:""",
+    "gantt": """Output ONLY a Mermaid gantt chart. Start with ```mermaid, end with ```.
 
-Example 1 — software project:
+CRITICAL RULES:
+- Use a SPECIFIC title related to the topic
+- Use SPECIFIC task names (not "Task 1", "Task 2")
+- Include at LEAST 3 sections with multiple tasks each
+
+Example — mobile app launch:
 ```mermaid
 gantt
-    title Software Development
+    title Mobile App Launch Plan
     dateFormat  YYYY-MM-DD
-    section Planning
-    Requirements      :a1, 2024-01-01, 10d
-    Design           :a2, after a1, 7d
-    section Implementation
-    Backend          :b1, after a2, 14d
-    Frontend         :b2, after a2, 12d
-    section Testing
-    Integration      :c1, after b1, 5d
-    UAT              :c2, after b1, 5d
+    section Research
+    User interviews        :a1, 2024-01-01, 14d
+    Competitor analysis    :a2, 2024-01-08, 7d
+    section Design
+    Wireframes             :b1, after a1, 10d
+    UI mockups             :b2, after b1, 10d
+    Usability testing      :b3, after b2, 5d
+    section Development
+    Backend API            :c1, after b2, 21d
+    iOS frontend           :c2, after b2, 28d
+    Android frontend       :c3, after b2, 28d
+    section Launch
+    Beta testing           :d1, after c1, 14d
+    App store submission   :d2, after d1, 7d
 ```
+Now generate a DETAILED Gantt chart with SPECIFIC tasks for:""",
+    "pie": """Output ONLY a Mermaid pie chart. Start with ```mermaid, end with ```.
 
-Example 2 — construction:
+CRITICAL RULES:
+- Use a SPECIFIC title related to the topic
+- Use SPECIFIC, REAL labels (not "Category A", "Category B")
+- Use realistic percentage values that add up properly
+
+Example:
 ```mermaid
-gantt
-    title Building House
-    dateFormat  YYYY-MM-DD
-    section Foundation
-    Excavation      :f1, 2024-01-01, 5d
-    Concrete        :f2, after f1, 3d
-    section Frame
-    Framing         :f3, after f2, 10d
-    Roofing         :f4, after f3, 5d
+pie title Cloud Infrastructure Costs 2024
+    "Compute (EC2/VMs)" : 35
+    "Storage (S3/Blob)" : 20
+    "Networking (CDN)" : 15
+    "Database (RDS)" : 18
+    "Monitoring" : 7
+    "Other services" : 5
 ```
-Now generate a Gantt chart for:""",
-    "pie": """Output ONLY a Mermaid pie chart code block. NO explanation before or after. Start with ```mermaid, end with ```.
+Now generate a DETAILED pie chart with SPECIFIC labels for:""",
+    "mindmap": """Output ONLY a Mermaid mindmap. Start with ```mermaid, end with ```.
 
-Example 1 — market share:
-```mermaid
-pie title Market Share
-    "Company A" : 35
-    "Company B" : 25
-    "Company C" : 20
-    "Others" : 20
-```
+CRITICAL RULES:
+- Root node MUST be the SPECIFIC topic
+- Every branch and leaf MUST have SPECIFIC, REAL content
+- NEVER use generic labels like "Topic", "Subtopic", "Item"
+- Include at LEAST 4 branches with 2-3 leaves each
 
-Example 2 — budget allocation:
-```mermaid
-pie title Budget 2024
-    "Development" : 40
-    "Marketing" : 25
-    "Operations" : 20
-    "Admin" : 15
-```
-Now generate a pie chart for:""",
-    "mindmap": """Output ONLY a Mermaid mindmap code block. NO explanation before or after. Start with ```mermaid, end with ```.
-
-Example 1 — project planning:
+Example — machine learning project:
 ```mermaid
 mindmap
-  root((Project X))
-    Planning
-      Requirements
-      Timeline
-      Resources
-    Development
-      Backend
-      Frontend
-      Database
-    Testing
-      Unit Tests
-      Integration
+  root((Machine Learning Pipeline))
+    Data Collection
+      Web scraping APIs
+      CSV file imports
+      Database queries
+    Preprocessing
+      Handle missing values
+      Feature scaling
+      Train-test split
+    Model Training
+      Random Forest
+      Neural Network
+      Cross validation
     Deployment
-      Staging
-      Production
+      REST API endpoint
+      Docker container
+      Monitoring dashboard
 ```
-
-Example 2 — problem analysis:
-```mermaid
-mindmap
-  root((System Issue))
-    Symptoms
-      Slow response
-      Timeouts
-      Errors
-    Causes
-      Network latency
-      CPU spike
-      Memory leak
-    Solutions
-      Optimize queries
-      Scale hardware
-      Patch bug
-```
-Now generate a mindmap for:""",
+Now generate a DETAILED mindmap with SPECIFIC content for:""",
 }
 
 GENERAL_SYSTEM = """You are a helpful AI assistant.
@@ -372,46 +346,28 @@ Answer using ONLY the document excerpts provided.
 If not found say: 'The uploaded document does not cover this topic.'
 """
 
-DOC_DIAGRAM_SYSTEM = """You are a document analysis and diagram generator.
+DOC_DIAGRAM_SYSTEM = """You are a document-to-diagram converter. Read the document and output a Mermaid diagram.
 
-TASK: Analyze the document content and create a Mermaid diagram that accurately represents the information.
+MANDATORY — EXTRACT REAL CONTENT:
+1. Read EVERY line of the document text below
+2. Find ALL: names, roles, systems, processes, steps, conditions, data fields
+3. Use ONLY words and phrases that ACTUALLY APPEAR in the document as node labels
+4. NEVER use placeholder labels: "Start", "End", "Decision", "Process", "Action", "Step", "Create", "Send"
 
-STEP 1 - EXTRACT from the document:
-• Entities: people, systems, modules, components, roles (e.g., user, admin, server)
-• Processes: actions, operations, workflows (e.g., create, validate, process)
-• Decisions: conditional logic, branches, checkpoints
-• Relationships: connections, dependencies, ownership, flows
-• Data structures: tables, fields, schemas (for ER diagrams)
-• States: lifecycle stages, status changes (for state diagrams)
-• Interactions: messages, calls, requests (for sequence diagrams)
+BUILD THE DIAGRAM:
+• Every entity/person/system from the document = a node with its REAL name
+• Every action/relationship = an arrow with a SPECIFIC label from the document
+• Use subgraphs to group related items by section or department
+• Include at LEAST 8 nodes with REAL content from the document
+• Arrow labels: use ACTUAL verbs from the document (e.g. "approves budget", "sends invoice")
 
-STEP 2 - CHOOSE diagram type based on content:
-• flowchart TD → processes, workflows, system architecture, data flow
-• sequenceDiagram → message sequences, API calls, step-by-step interactions
-• erDiagram → database tables, data models, entity relationships
-• classDiagram → object-oriented structures, classes with attributes/methods
-• stateDiagram-v2 → state machines, lifecycles, status transitions
-
-STEP 3 - BUILD the diagram:
-• Include ALL key entities from the document
-• Show DIRECTION of flow (--> or --->)
-• Add MEANINGFUL labels on arrows describing the action
-• Use SQUARE BRACKETS for nodes: NodeName[Label]
-• Keep node labels concise (3-5 words max)
-• Group related steps with subgraphs if helpful
-
-CRITICAL RULES:
-✗ DO NOT invent information not in the document
-✓ ONLY use facts from the provided document excerpts
-✓ If document mentions "user logs in" → include user, login, authentication nodes
-✓ If document shows data flow → trace the complete path
-✓ If document describes multiple scenarios → choose the most important one
-
-OUTPUT FORMAT:
-Return ONLY the Mermaid code block. No explanations.
-```mermaid
-<diagram code here>
-```
+RULES:
+• Output ONLY the ```mermaid code block — NO text before or after
+• If the document describes a process → use flowchart TD
+• If the document describes messages/API calls → use sequenceDiagram
+• If the document describes database tables → use erDiagram
+• If the document describes classes/objects → use classDiagram
+• If the document describes states/lifecycle → use stateDiagram-v2
 """
 
 
@@ -428,6 +384,25 @@ MERMAID_STARTERS = [
     "pie",
     "mindmap",
 ]
+
+# Generic placeholder labels that indicate a low-quality diagram
+_PLACEHOLDER_LABELS = {
+    "start", "end", "decision", "process", "action", "step 1", "step 2",
+    "step 3", "step 4", "input", "output", "result", "task",
+    "node1", "node2", "node3", "state1", "state2",
+}
+
+
+def _has_placeholder_labels(text: str) -> bool:
+    """Return True if the diagram has too many generic/placeholder node labels."""
+    lower = text.lower()
+    # Extract node labels from brackets like [Start] or [Decision]
+    labels = re.findall(r'\[([^\]]+)\]', lower)
+    if not labels:
+        return False
+    placeholder_count = sum(1 for lbl in labels if lbl.strip() in _PLACEHOLDER_LABELS)
+    # If more than 40% of labels are placeholders, reject
+    return placeholder_count > len(labels) * 0.4
 
 
 def _is_valid_mermaid(text: str) -> bool:
@@ -496,6 +471,58 @@ def _extract_or_fix(text: str) -> str:
     return text  # give up, return as-is
 
 
+# ── Helpers for document-based diagram generation ──────────────────────────────
+
+def _get_diagram_type_hint(diagram_type: str) -> str:
+    """Return a short syntax hint for the requested diagram type."""
+    hints = {
+        "flowchart TD": "Syntax: flowchart TD\\n    A[Start] --> B{Decision}\\n    B -- Yes --> C[Action]\\n    B -- No --> D[Other]",
+        "sequenceDiagram": "Syntax: sequenceDiagram\\n    Actor1->>Actor2: action\\n    Actor2-->>Actor1: response",
+        "erDiagram": "Syntax: erDiagram\\n    TABLE1 ||--o{ TABLE2 : has\\n    TABLE1 {\\n        int id PK\\n        string name\\n    }",
+        "classDiagram": "Syntax: classDiagram\\n    Parent <|-- Child\\n    Parent : +String name\\n    Parent : +method()",
+        "stateDiagram-v2": "Syntax: stateDiagram-v2\\n    [*] --> State1\\n    State1 --> State2 : event",
+        "gantt": "Syntax: gantt\\n    title Project\\n    dateFormat YYYY-MM-DD\\n    section Phase\\n    Task1 :a1, 2024-01-01, 10d",
+        "pie": "Syntax: pie title Title\\n    \"Label1\" : 40\\n    \"Label2\" : 30",
+        "mindmap": "Syntax: mindmap\\n  root((Topic))\\n    Branch1\\n      Sub1\\n    Branch2",
+    }
+    return hints.get(diagram_type, hints["flowchart TD"])
+
+
+def _wrap_partial_mermaid(raw_output: str, diagram_type: str) -> str:
+    """
+    When we pre-seed '```mermaid\\n' in the prompt, the model outputs
+    the diagram body directly. This wraps it back into a proper fenced block.
+    """
+    text = raw_output.strip()
+
+    # If it already has proper fences, leave it alone
+    if text.startswith("```mermaid"):
+        return text
+
+    # Strip any trailing ``` the model might have added
+    if text.endswith("```"):
+        text = text[:-3].strip()
+
+    # Strip any leading ``` the model might have re-added
+    if text.startswith("```"):
+        text = text[3:].strip()
+        if text.lower().startswith("mermaid"):
+            text = text[7:].strip()
+
+    # If the model didn't include the diagram type keyword, prepend it
+    has_type = any(
+        text.lower().startswith(t.lower())
+        for t in [
+            "flowchart", "graph ", "sequenceDiagram", "erDiagram",
+            "classDiagram", "stateDiagram", "gantt", "pie", "mindmap",
+        ]
+    )
+    if not has_type and text:
+        text = diagram_type + "\n" + text
+
+    return "```mermaid\n" + text + "\n```"
+
+
 # ── Generate ───────────────────────────────────────────────────────────────────
 
 
@@ -507,55 +534,71 @@ def generate(
     # ── Diagram ───────────────────────────────────────────────────────────────
     if mode == "diagram":
         if context:
-            context = context[:4096]
+            # Document-based diagram: use full context with doc-diagram prompt
+            context = context[:3500]
+            type_hint = _get_diagram_type_hint(diagram_type)
+
             full_prompt = (
                 f"<|system|>\n{DOC_DIAGRAM_SYSTEM}<|end|>\n"
                 f"<|user|>\n"
-                f"=== DOCUMENT CONTENT ===\n{context}\n=== END ===\n\n"
+                f"=== DOCUMENT CONTENT (read every line carefully) ===\n{context}\n=== END OF DOCUMENT ===\n\n"
                 f"User request: {prompt}\n"
-                f"Extract key information from the document above and create a {diagram_type} diagram.\n"
+                f"Diagram type: {diagram_type}\n"
+                f"{type_hint}\n"
+                f"REMEMBER: Use ONLY real names, terms, and processes from the document above. "
+                f"NEVER use generic labels like Start, End, Decision, Process. "
+                f"Every node label must contain ACTUAL content from the document.\n"
                 f"<|end|>\n"
-                f"<|assistant|>\n"
+                f"<|assistant|>\n```mermaid\n"
             )
+            temp = 0.05
+            max_tokens = 1500
         else:
             system = DIAGRAM_PROMPTS.get(diagram_type, DIAGRAM_PROMPTS["flowchart TD"])
             full_prompt = (
                 f"<|system|>\n{system}<|end|>\n"
-                f"<|user|>\n{prompt}<|end|>\n"
+                f"<|user|>\n{prompt}\n\nREMEMBER: Every node must have SPECIFIC content about '{prompt}'. NEVER use generic labels like Start, End, Decision.<|end|>\n"
                 f"<|assistant|>\n"
             )
-
-        # Adjust generation parameters based on whether we have context
-        temp = 0.05 if context else 0.15
-        max_tokens = 768 if context else 512
+            temp = 0.15
+            max_tokens = 1024
 
         result = llm(
             full_prompt,
             max_tokens=max_tokens,
             temperature=temp,
-            stop=["<|end|>", "<|user|>"],
+            stop=["<|end|>", "<|user|>", "```\n\n"],
             echo=False,
         )
         raw_output = result["choices"][0]["text"].strip()
+
+        # For document-based diagrams, we pre-seeded "```mermaid\n" in the prompt
+        if context:
+            # The output should be the diagram body — wrap it
+            raw_output = _wrap_partial_mermaid(raw_output, diagram_type)
+
         extracted = _extract_or_fix(raw_output)
 
-        # Validate — retry up to 2 times if invalid
-        if not _is_valid_mermaid(extracted):
-            print("[LLM] Invalid Mermaid output — retrying...")
+        # Validate — retry up to 2 times if invalid or has placeholder labels
+        needs_retry = not _is_valid_mermaid(extracted) or _has_placeholder_labels(extracted)
+        if needs_retry:
+            reason = "placeholder labels" if _has_placeholder_labels(extracted) else "invalid syntax"
+            print(f"[LLM] Diagram rejected ({reason}) — retrying...")
             for attempt in range(2):
                 result2 = llm(
                     full_prompt,
                     max_tokens=max_tokens,
-                    temperature=0.25,
-                    stop=["<|end|>", "<|user|>"],
+                    temperature=0.25 + (attempt * 0.1),
+                    stop=["<|end|>", "<|user|>", "```\n\n"],
                     echo=False,
                 )
                 raw_output2 = result2["choices"][0]["text"].strip()
+                if context:
+                    raw_output2 = _wrap_partial_mermaid(raw_output2, diagram_type)
                 extracted2 = _extract_or_fix(raw_output2)
-                if _is_valid_mermaid(extracted2):
+                if _is_valid_mermaid(extracted2) and not _has_placeholder_labels(extracted2):
                     return extracted2
-            # All retries failed, return best attempt
-            print("[LLM] All retries produced invalid Mermaid")
+            print("[LLM] All retries produced low-quality diagrams")
 
         return extracted
 

@@ -292,5 +292,28 @@ def get_stats() -> dict:
     }
 
 
+def get_all_content(max_chars: int = 3500) -> str:
+    """
+    Return ALL document content concatenated, up to max_chars.
+    Used for diagram generation where keyword search fails
+    because the query is about diagrams, not document topics.
+    """
+    if not _chunks:
+        return ""
+
+    result = ""
+    for i, chunk in enumerate(_chunks):
+        part = f"[Document: {_chunk_doc[i]}, page {_chunk_page[i]}]\n{chunk}\n\n"
+        if len(result) + len(part) > max_chars:
+            # Add as much as we can fit
+            remaining = max_chars - len(result)
+            if remaining > 50:
+                result += part[:remaining]
+            break
+        result += part
+
+    return result.strip()
+
+
 def has_documents() -> bool:
     return bool(_chunks)

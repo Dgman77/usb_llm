@@ -116,18 +116,61 @@ DOC_TO_DIAGRAM_KEYWORDS = [
     "from my document",
     "from my file",
     "from uploaded",
+    "from the uploaded",
+    "from the file",
+    "from the pdf",
+    "from my pdf",
     "based on the document",
     "based on document",
+    "based on the file",
+    "based on my file",
+    "based on the pdf",
+    "based on uploaded",
     "using the document",
     "using my document",
+    "using the file",
+    "using my file",
     "analyze the document",
     "analyse the document",
+    "analyze the file",
+    "analyse the file",
+    "analyze my document",
+    "analyse my document",
     "diagram from",
     "draw from",
     "flowchart from",
-    "schema from my",
+    "chart from",
+    "schema from",
     "er diagram from",
     "extract from",
+    "visualize the document",
+    "visualise the document",
+    "visualize the file",
+    "visualise the file",
+    "visualize my",
+    "visualise my",
+    "diagram of the document",
+    "diagram of my document",
+    "diagram of my file",
+    "diagram of the file",
+    "chart of the document",
+    "chart of my",
+    "graph of the document",
+    "graph of my",
+    "map the document",
+    "map my document",
+    "summarize as diagram",
+    "summarise as diagram",
+    "convert to diagram",
+    "turn into diagram",
+    "turn into flowchart",
+    "make a diagram of",
+    "create a diagram of",
+    "generate a diagram of",
+    "generate diagram of",
+    "draw a diagram of",
+    "of the uploaded",
+    "of my uploaded",
 ]
 
 
@@ -143,7 +186,11 @@ def user_wants_doc_to_diagram(user_message: str) -> bool:
     # Also check if "diagram" is requested AND user mentions "document"/"file"/"upload"
     diagram_requested = any(kw in msg for kw in ALL_DIAGRAM_KEYWORDS)
     doc_reference = any(
-        kw in msg for kw in ["document", "file", "upload", "pdf", "docx"]
+        kw in msg
+        for kw in [
+            "document", "file", "upload", "uploaded", "pdf", "docx",
+            "txt", "knowledge", "external", "attachment",
+        ]
     )
     return diagram_requested and doc_reference
 

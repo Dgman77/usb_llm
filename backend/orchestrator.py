@@ -3,7 +3,7 @@
 import re
 
 from router import route, detect_diagram_type, user_wants_doc_to_diagram
-from rag import search, has_documents
+from rag import search, has_documents, get_all_content
 from llm import generate, user_wants_doc_search
 
 
@@ -31,24 +31,34 @@ def handle_request(user_message: str):
                 "response": "No documents uploaded. Please upload a document first, then ask for a diagram from it.",
             }
 
-        # If documents exist, search for relevant content
         context = ""
         if has_documents():
-            # Use more chunks for document diagrams to get better coverage
-            top_k = 12 if explicitly_from_doc else 6
-            context = search(user_message, top_k=top_k)
+            if explicitly_from_doc:
+                # User explicitly wants diagram from document —
+                # grab ALL document content for maximum coverage
+                context = get_all_content(max_chars=3500)
 
-            # Clean metadata for diagram context (avoid "[Document:...]" in nodes)
-            context = re.sub(
-                r"^\[Document:.*?\]\s*\n?", "", context, flags=re.MULTILINE
-            ).strip()
+                if not context:
+                    return {
+                        "mode": "qa",
+                        "response": "No relevant content found in uploaded documents. Try uploading a document first, or ask for a general diagram without mentioning the document.",
+                    }
+            else:
+                # User asked for a diagram and docs happen to be uploaded —
+                # do a broad search to see if document content is relevant
+                # Strip diagram keywords from query so we search by topic, not "draw flowchart"
+                search_query = _strip_diagram_keywords(user_message)
+                if search_query:
+                    context = search(search_query, top_k=8)
+                else:
+                    # Query was purely diagram keywords — grab all doc content
+                    context = get_all_content(max_chars=3500)
 
-            # User explicitly requested document-based diagram but no relevant content
-            if explicitly_from_doc and not context:
-                return {
-                    "mode": "qa",
-                    "response": "No relevant content found in uploaded documents. Try uploading a document first, or ask for a general diagram without mentioning the document.",
-                }
+            # Clean metadata tags from context (avoid "[Document:...]" in diagram nodes)
+            if context:
+                context = re.sub(
+                    r"^\[Document:.*?\]\s*\n?", "", context, flags=re.MULTILINE
+                ).strip()
 
         # Generate diagram with or without context
         return {
@@ -86,3 +96,23 @@ def handle_request(user_message: str):
         answer = generate(prompt=user_message, mode="qa", context=context)
 
     return {"mode": "qa", "response": answer}
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────
+# Words that indicate "I want a diagram" but carry no topical meaning
+_DIAGRAM_NOISE = {
+    "draw", "generate", "create", "make", "show", "build", "visualize",
+    "visualise", "diagram", "chart", "flowchart", "flow", "graph",
+    "sketch", "map", "layout", "mermaid", "a", "an", "the", "for",
+    "of", "from", "my", "me", "please", "can", "you", "it", "this",
+    "that", "about", "on", "to", "and", "with", "in", "document",
+    "file", "upload", "uploaded", "pdf", "docx", "txt", "based",
+    "using", "analyze", "analyse", "extract",
+}
+
+
+def _strip_diagram_keywords(msg: str) -> str:
+    """Remove diagram/action words so we search by *topic* only."""
+    words = msg.lower().split()
+    remaining = [w for w in words if w not in _DIAGRAM_NOISE]
+    return " ".join(remaining).strip()
