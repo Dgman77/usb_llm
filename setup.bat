@@ -4,7 +4,7 @@ title LLM with RAG and Diagram -- Setup
 color 0A
 
 :: ─────────────────────────────────────────────────────────────
-:: ROOT PATH  (strip trailing backslash)
+:: ROOT PATH  (strip trailing backslash -- works on any drive/PC)
 :: ─────────────────────────────────────────────────────────────
 SET ROOT=%~dp0
 IF "%ROOT:~-1%"=="\" SET ROOT=%ROOT:~0,-1%
@@ -23,6 +23,7 @@ SET PATH=%PY_DIR%;%SCRIPTS%;%SystemRoot%\system32;%SystemRoot%
 echo.
 echo ============================================================
 echo   LLM with RAG and Diagram -- Setup   ^|   Drive: %ROOT:~0,2%
+echo   Root : %ROOT%
 echo ============================================================
 echo.
 
@@ -118,8 +119,14 @@ exit /b 0
 :: PYTHON CHECK / INSTALL
 :: ─────────────────────────────────────────────────────────────
 :python_check
+echo ============================================================
+echo   Python Check
+echo ============================================================
+echo.
+
 IF EXIST "%PY%" (
-    echo [SKIP] Python already installed at %PY%
+    echo [SKIP] Python already installed at:
+    echo        %PY%
     echo.
     goto :pip_check
 )
@@ -137,7 +144,7 @@ IF NOT EXIST "%PY_ZIP%" (
     echo  Extract to: %PY_DIR%\   then re-run.
     pause & exit /b 1
 )
-echo [OK] Downloaded
+echo [OK] Downloaded Python 3.11.9 zip
 
 powershell -Command "& { Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('%PY_ZIP%', '%PY_DIR%') }" >nul 2>&1
 IF ERRORLEVEL 1 tar -xf "%PY_ZIP%" -C "%PY_DIR%"
@@ -148,7 +155,6 @@ IF NOT EXIST "%PY%" (
     pause & exit /b 1
 )
 echo [OK] Python 3.11.9 extracted
-echo.
 
 :: Enable site-packages in embedded Python
 SET PTH=%PY_DIR%\python311._pth
@@ -163,6 +169,11 @@ echo.
 :: PIP CHECK / INSTALL
 :: ─────────────────────────────────────────────────────────────
 :pip_check
+echo ============================================================
+echo   pip Check
+echo ============================================================
+echo.
+
 "%PY%" -m pip --version >nul 2>&1
 IF NOT ERRORLEVEL 1 (
     echo [SKIP] pip already installed
@@ -206,9 +217,7 @@ call :reg  faiss                "faiss-cpu>=1.7.4"
 call :reg  numpy                "numpy>=1.24.0,<2.0.0"
 call :reg  pydantic             "pydantic>=2.0.0"
 call :reg  rank_bm25            "rank-bm25>=0.2.2"
-call :reg  docx                 "python-docx"
-call :reg  sentence_transformers "sentence-transformers>=2.2.0"
-call :reg  httpx                "httpx>=0.24.0"
+call :reg  docx                 "python-docx>=1.1.0"
 
 :: ── Scan: split into already-installed vs. needs-install ──────
 SET /A SKIP_COUNT=0
@@ -217,7 +226,8 @@ SET /A INSTALL_COUNT=0
 SET /A _LAST=%PKG_TOTAL%-1
 
 FOR /L %%I IN (0,1,%_LAST%) DO (
-    IF EXIST "%SITE%\!PKG_FOLDER[%%I]!" (
+    "%PY%" -c "import !PKG_FOLDER[%%I]!" >nul 2>&1
+    IF NOT ERRORLEVEL 1 (
         SET /A SKIP_COUNT+=1
     ) ELSE (
         SET "INSTALL_FOLDER[!INSTALL_COUNT!]=!PKG_FOLDER[%%I]!"
@@ -242,7 +252,8 @@ IF %SKIP_COUNT% GTR 0 (
     echo.
     SET /A _SI=0
     FOR /L %%I IN (0,1,%_LAST%) DO (
-        IF EXIST "%SITE%\!PKG_FOLDER[%%I]!" (
+        "%PY%" -c "import !PKG_FOLDER[%%I]!" >nul 2>&1
+        IF NOT ERRORLEVEL 1 (
             SET /A _SI+=1
             call :progress_bar !_SI! %SKIP_COUNT% "!PKG_FOLDER[%%I]!" skip
         )
@@ -292,54 +303,134 @@ IF %_FAIL% GTR 0 (
 )
 
 :: ─────────────────────────────────────────────────────────────
-:: LLAMA-CPP  (pre-built wheel required in .\wheels\)
+:: LLAMA-CPP  (pre-built wheel -- dynamic path from .\wheels\)
 :: ─────────────────────────────────────────────────────────────
 :llama_cpp
 echo ============================================================
-echo   llama_cpp
+echo   llama_cpp Wheel Status
 echo ============================================================
 echo.
 
-IF EXIST "%SITE%\llama_cpp" (
+:: ── Step 1: Check if already installed ───────────────────────
+"%PY%" -c "from llama_cpp import Llama" >nul 2>&1
+IF NOT ERRORLEVEL 1 (
+    echo   [STATUS] llama_cpp install  ^>^>  Already installed
+    echo   [STATUS] Import check       ^>^>  PASSED
+    echo.
     call :progress_bar 1 1 "llama_cpp" skip
     echo.
     goto :verify
 )
 
-:: Search for any matching wheel in the wheels folder
+echo   [STATUS] llama_cpp install  ^>^>  NOT installed
+echo   [STATUS] Scanning wheels folder ...
+echo   Wheels folder : %WHEELS%
+echo.
+
+:: ── Step 2: Detect wheel dynamically (NO hardcoded path) ─────
 SET "WHEEL_PATH="
 FOR %%F IN ("%WHEELS%\llama_cpp_python-*.whl") DO SET "WHEEL_PATH=%%F"
 
+:: ── Step 3: Report wheel file status ─────────────────────────
 IF NOT DEFINED WHEEL_PATH (
-    echo  +------------------------------------------------------+
-    echo  ^|  WHEEL NOT FOUND                                     ^|
-    echo  ^|  Download from:                                      ^|
-    echo  ^|  github.com/abetlen/llama-cpp-python/releases        ^|
-    echo  ^|  Tag  : v0.2.90                                      ^|
-    echo  ^|  File : llama_cpp_python-0.2.90-cp311-cp311-         ^|
-    echo  ^|         win_amd64.whl                                ^|
-    echo  ^|  Save to: %ROOT%\wheels\          ^|
-    echo  +------------------------------------------------------+
+    echo   [STATUS] Wheel file   ^>^>  NOT FOUND
+    echo.
+    echo  +--------------------------------------------------------+
+    echo  ^|  WHEEL NOT FOUND                                       ^|
+    echo  ^|  Download from:                                        ^|
+    echo  ^|  github.com/abetlen/llama-cpp-python/releases          ^|
+    echo  ^|  Tag  : v0.2.90                                        ^|
+    echo  ^|  File : llama_cpp_python-0.2.90-cp311-cp311-           ^|
+    echo  ^|         win_amd64.whl                                  ^|
+    echo  ^|  Save to : %ROOT%\wheels\                              ^|
+    echo  +--------------------------------------------------------+
     echo.
     pause & exit /b 1
 )
 
-echo   Found wheel: %WHEEL_PATH%
+echo   [STATUS] Wheel file   ^>^>  FOUND
+echo   Path : %WHEEL_PATH%
+echo.
+
+:: ── Step 4: METHOD 1 -- pip install (with deps, verbose on fail) ──
+echo   [METHOD 1] pip install (with dependencies) ...
 echo.
 call :progress_bar 0 1 "llama_cpp" working
-"%PY%" -m pip install "%WHEEL_PATH%" --quiet
-IF ERRORLEVEL 1 (
+
+SET "_PIP_LOG=%ROOT%\llama_pip_error.log"
+"%PY%" -m pip install "%WHEEL_PATH%" --quiet > "%_PIP_LOG%" 2>&1
+SET _LERR=%ERRORLEVEL%
+
+IF %_LERR% EQU 0 (
+    del "%_PIP_LOG%" >nul 2>&1
+    "%PY%" -c "from llama_cpp import Llama" >nul 2>&1
+    IF NOT ERRORLEVEL 1 (
+        call :progress_bar 1 1 "llama_cpp" ok
+        echo.
+        echo   [STATUS] Wheel extracted    ^>^>  SUCCESS  (pip method)
+        echo   [STATUS] Import check       ^>^>  PASSED   (from llama_cpp import Llama)
+        echo.
+        goto :verify
+    ) ELSE (
+        call :progress_bar 1 1 "llama_cpp" fail
+        echo.
+        echo   [STATUS] pip install OK but import FAILED
+        echo   [TIP]    Wheel platform mismatch -- expected cp311-cp311-win_amd64
+        goto :error
+    )
+)
+
+:: pip failed -- show the actual error log
+call :progress_bar 1 1 "llama_cpp" fail
+echo.
+echo   [STATUS] pip install      ^>^>  FAILED  (exit code: %_LERR%)
+echo   --------------------------------------------------------
+echo   pip error output:
+echo   --------------------------------------------------------
+type "%_PIP_LOG%"
+del "%_PIP_LOG%" >nul 2>&1
+echo   --------------------------------------------------------
+echo.
+
+:: ── Step 5: METHOD 2 -- PowerShell ZipFile fallback ──────────
+echo   [METHOD 2] Trying PowerShell ZipFile extraction ...
+echo.
+call :progress_bar 0 1 "llama_cpp" working
+
+powershell -Command "& { Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('%WHEEL_PATH%', '%SITE%') }" >nul 2>&1
+SET _ZERR=%ERRORLEVEL%
+
+IF %_ZERR% EQU 0 (
+    "%PY%" -c "from llama_cpp import Llama" >nul 2>&1
+    IF NOT ERRORLEVEL 1 (
+        call :progress_bar 1 1 "llama_cpp" ok
+        echo.
+        echo   [STATUS] Wheel extracted    ^>^>  SUCCESS  (ZipFile method)
+        echo   [STATUS] Import check       ^>^>  PASSED   (from llama_cpp import Llama)
+        echo.
+        goto :verify
+    ) ELSE (
+        call :progress_bar 1 1 "llama_cpp" fail
+        echo.
+        echo   [STATUS] ZipFile extracted OK but import FAILED
+        echo   [TIP]    Wheel may be wrong Python version or platform.
+        echo            Required: cp311-cp311-win_amd64
+        goto :error
+    )
+) ELSE (
     call :progress_bar 1 1 "llama_cpp" fail
     echo.
-    echo  [HINT] Possible reasons:
-    echo    1. Wrong Python version -- wheel needs cp311 (Python 3.11)
-    echo    2. Wrong architecture  -- wheel needs win_amd64 (64-bit)
-    echo    3. VC++ runtime missing -- install Visual C++ Redistributable
+    echo   [STATUS] ZipFile method   ^>^>  FAILED  (exit code: %_ZERR%)
     echo.
-    goto :error
 )
-call :progress_bar 1 1 "llama_cpp" ok
+
+:: ── Both methods failed ───────────────────────────────────────
+echo   [STATUS] Both install methods FAILED
 echo.
+echo   Manual fix -- run this command yourself:
+echo   %PY% -m pip install "%WHEEL_PATH%"
+echo.
+goto :error
 
 :: ─────────────────────────────────────────────────────────────
 :: VERIFY KEY IMPORTS
@@ -353,22 +444,37 @@ echo.
 SET /A V_FAIL=0
 
 "%PY%" -c "import fastapi" >nul 2>&1
-IF ERRORLEVEL 1 ( echo   [FAIL] fastapi & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] fastapi )
+IF ERRORLEVEL 1 ( echo   [FAIL] fastapi           & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] fastapi )
 
 "%PY%" -c "import uvicorn" >nul 2>&1
-IF ERRORLEVEL 1 ( echo   [FAIL] uvicorn & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] uvicorn )
+IF ERRORLEVEL 1 ( echo   [FAIL] uvicorn           & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] uvicorn )
+
+"%PY%" -c "import multipart" >nul 2>&1
+IF ERRORLEVEL 1 ( echo   [FAIL] python-multipart  & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] python-multipart )
+
+"%PY%" -c "import aiofiles" >nul 2>&1
+IF ERRORLEVEL 1 ( echo   [FAIL] aiofiles          & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] aiofiles )
 
 "%PY%" -c "import fitz" >nul 2>&1
-IF ERRORLEVEL 1 ( echo   [FAIL] PyMuPDF (fitz) & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] PyMuPDF (fitz) )
+IF ERRORLEVEL 1 ( echo   [FAIL] PyMuPDF (fitz)    & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] PyMuPDF (fitz) )
 
 "%PY%" -c "import faiss" >nul 2>&1
-IF ERRORLEVEL 1 ( echo   [FAIL] faiss-cpu & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] faiss-cpu )
+IF ERRORLEVEL 1 ( echo   [FAIL] faiss-cpu         & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] faiss-cpu )
 
 "%PY%" -c "import numpy" >nul 2>&1
-IF ERRORLEVEL 1 ( echo   [FAIL] numpy & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] numpy )
+IF ERRORLEVEL 1 ( echo   [FAIL] numpy             & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] numpy )
+
+"%PY%" -c "import pydantic" >nul 2>&1
+IF ERRORLEVEL 1 ( echo   [FAIL] pydantic          & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] pydantic )
+
+"%PY%" -c "import rank_bm25" >nul 2>&1
+IF ERRORLEVEL 1 ( echo   [FAIL] rank-bm25         & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] rank-bm25 )
+
+"%PY%" -c "import docx" >nul 2>&1
+IF ERRORLEVEL 1 ( echo   [FAIL] python-docx       & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] python-docx )
 
 "%PY%" -c "from llama_cpp import Llama" >nul 2>&1
-IF ERRORLEVEL 1 ( echo   [FAIL] llama_cpp & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] llama_cpp )
+IF ERRORLEVEL 1 ( echo   [FAIL] llama_cpp         & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] llama_cpp )
 
 echo.
 IF %V_FAIL% GTR 0 (
@@ -384,14 +490,20 @@ echo.
 IF NOT EXIST "%ROOT%\models" (
     mkdir "%ROOT%\models"
     echo [OK] Created models\ folder
+) ELSE (
+    echo [SKIP] models\ folder already exists
 )
+echo.
 
 :: ─────────────────────────────────────────────────────────────
 :done
 echo.
 echo ============================================================
 echo   ALL DONE -- Pendrive ready for any Windows laptop
+echo   Root folder   : %ROOT%\
 echo   Models folder : %ROOT%\models\
+echo   Python        : %PY%
+echo   Wheels folder : %WHEELS%\
 echo   Users run     : start.bat
 echo ============================================================
 echo.
@@ -410,6 +522,10 @@ exit /b 0
 
 :error
 echo.
-echo [ERROR] Install failed -- try running as Administrator
+echo ============================================================
+echo   [ERROR] Setup did not complete successfully.
+echo   [TIP]   Try running as Administrator.
+echo ============================================================
+echo.
 pause
 exit /b 1
