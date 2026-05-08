@@ -218,6 +218,11 @@ call :reg  numpy                "numpy>=1.24.0,<2.0.0"
 call :reg  pydantic             "pydantic>=2.0.0"
 call :reg  rank_bm25            "rank-bm25>=0.2.2"
 call :reg  docx                 "python-docx>=1.1.0"
+call :reg  openpyxl             "openpyxl>=3.1.0"
+call :reg  pptx                 "python-pptx>=0.6.21"
+call :reg  bs4                  "beautifulsoup4>=4.12.0"
+call :reg  striprtf             "striprtf>=0.0.26"
+call :reg  PIL                  "Pillow>=10.0.0"
 
 :: ── Scan: split into already-installed vs. needs-install ──────
 SET /A SKIP_COUNT=0

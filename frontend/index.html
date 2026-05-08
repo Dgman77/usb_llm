@@ -543,13 +543,13 @@
   <div>
     <div class="section-label">Knowledge base</div>
     <div id="upload-area" onclick="document.getElementById('file-input').click()">
-      <input type="file" id="file-input" accept=".pdf,.docx,.txt" multiple>
+      <input type="file" id="file-input" accept=".pdf,.docx,.txt,.csv,.xlsx,.pptx,.html,.htm,.md,.json,.xml,.rtf,.png,.jpg,.jpeg,.gif,.webp" multiple>
       <div class="upload-icon">
         <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
         </svg>
       </div>
-      <p><strong>Upload</strong><br>PDF, DOCX, or TXT</p>
+      <p><strong>Upload</strong><br>Docs, Data, or Images</p>
     </div>
     <div id="doc-list" style="margin-top:10px;"></div>
   </div>
@@ -812,10 +812,27 @@
     } else {
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
-      bubble.textContent = response;
+      bubble.innerHTML = formatResponse(response);
       wrapper.appendChild(bubble);
+
+      if (data.sources && data.sources.length > 0) {
+        const sourceList = document.createElement('div');
+        sourceList.style.cssText = 'font-size:11px; color:var(--muted); margin-top:8px; font-family:var(--mono);';
+        const docs = [...new Set(data.sources.map(s => s.doc))];
+        sourceList.textContent = 'Sources: ' + docs.join(', ');
+        wrapper.appendChild(sourceList);
+      }
+
       chat.appendChild(wrapper);
     }
+  }
+
+  function formatResponse(text) {
+    // Simple markdown-ish formatting for headers and bold
+    return text
+      .replace(/### (.*?)(\n|$)/g, '<h3 style="margin:10px 0 5px; font-size:16px;">$1</h3>')
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\n/g, '<br>');
   }
 
   function extractMermaid(text) {

@@ -3,17 +3,15 @@
 import re
 
 from router import route, detect_diagram_type, user_wants_doc_to_diagram
-from rag import search, has_documents, get_all_content
+from rag import search_adaptive, has_documents, get_all_content
 from llm import generate, user_wants_doc_search
 
 
 def handle_request(user_message: str):
     """
-    Decides:
-    - diagram vs qa
-    - doc vs general
-    - document-to-diagram (generate diagram from uploaded document)
-    - fallback logic
+    Adaptive Orchestrator:
+    - High Confidence: Strict source-based answer.
+    - Low Confidence: Related data fallback or general knowledge.
     """
 
     mode = route(user_message)
@@ -21,46 +19,27 @@ def handle_request(user_message: str):
 
     # ── DIAGRAM ─────────────────────────────────────
     if mode == "diagram":
-        # Check if user explicitly wants to generate diagram FROM document
         explicitly_from_doc = user_wants_doc_to_diagram(user_message)
 
-        # If user explicitly wants document-based diagram but no documents uploaded
         if explicitly_from_doc and not has_documents():
             return {
                 "mode": "qa",
-                "response": "No documents uploaded. Please upload a document first, then ask for a diagram from it.",
+                "response": "No documents uploaded. Please upload a document first.",
             }
 
         context = ""
         if has_documents():
             if explicitly_from_doc:
-                # User explicitly wants diagram from document —
-                # grab ALL document content for maximum coverage
                 context = get_all_content(max_chars=3500)
-
-                if not context:
-                    return {
-                        "mode": "qa",
-                        "response": "No relevant content found in uploaded documents. Try uploading a document first, or ask for a general diagram without mentioning the document.",
-                    }
             else:
-                # User asked for a diagram and docs happen to be uploaded —
-                # do a broad search to see if document content is relevant
-                # Strip diagram keywords from query so we search by topic, not "draw flowchart"
                 search_query = _strip_diagram_keywords(user_message)
-                if search_query:
-                    context = search(search_query, top_k=8)
-                else:
-                    # Query was purely diagram keywords — grab all doc content
-                    context = get_all_content(max_chars=3500)
+                # Use adaptive search for diagrams too to find the best section
+                res = search_adaptive(search_query or user_message, top_k=8)
+                context = res["context"]
 
-            # Clean metadata tags from context (avoid "[Document:...]" in diagram nodes)
             if context:
-                context = re.sub(
-                    r"^\[Document:.*?\]\s*\n?", "", context, flags=re.MULTILINE
-                ).strip()
+                context = re.sub(r"^\[Document:.*?\]\s*\n?", "", context, flags=re.MULTILINE).strip()
 
-        # Generate diagram with or without context
         return {
             "mode": "diagram",
             "response": generate(
@@ -71,31 +50,47 @@ def handle_request(user_message: str):
             ),
         }
 
-    # ── QA FLOW ─────────────────────────────────────
-    context = ""
-    if has_documents():
-        context = search(user_message)
+    # ── QA FLOW (ADAPTIVE) ──────────────────────────
+    if not has_documents():
+        return {"mode": "qa", "response": generate(prompt=user_message, mode="qa")}
 
-    # CASE 1: user explicitly wants document
+    # Perform Adaptive Search
+    search_res = search_adaptive(user_message)
+    context = search_res["context"]
+    confidence = search_res["confidence"]
+    suggestion = search_res["suggestion"]
+
+    # CASE 1: User explicitly asked about documents
     if user_wants_doc_search(user_message):
-        if not context:
-            return {"mode": "qa", "response": "No documents uploaded."}
-
+        # Even if confidence is low, we try to answer from doc if they asked
         return {
             "mode": "qa",
-            "response": generate(prompt=user_message, mode="qa", context=context),
+            "response": generate(
+                prompt=user_message, 
+                mode="doc_qa", 
+                context=context, 
+                confidence=confidence
+            ),
+            "sources": search_res["sources"]
         }
 
-    # CASE 2: normal answer first
-    answer = generate(prompt=user_message, mode="qa")
+    # CASE 2: High Confidence -> Source-accurate answer
+    if confidence > 0.6:
+        return {
+            "mode": "qa",
+            "response": generate(prompt=user_message, mode="doc_qa", context=context),
+            "sources": search_res["sources"]
+        }
 
-    # CASE 3: fallback to RAG
-    weak = ["i don't know", "not sure", "cannot", "no information"]
+    # CASE 3: Medium/Low Confidence -> Fallback to general + related info
+    general_answer = generate(prompt=user_message, mode="qa")
+    
+    if suggestion:
+        # Append related info hint to general answer
+        response = f"{general_answer}\n\n---\n**Related info from your files:**\n{suggestion}"
+        return {"mode": "qa", "response": response, "sources": search_res["sources"]}
 
-    if any(w in answer.lower() for w in weak) and context:
-        answer = generate(prompt=user_message, mode="qa", context=context)
-
-    return {"mode": "qa", "response": answer}
+    return {"mode": "qa", "response": general_answer}
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────

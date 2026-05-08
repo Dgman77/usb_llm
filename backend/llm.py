@@ -11,6 +11,7 @@ import os
 import glob
 import re
 from llama_cpp import Llama
+from diagram_engine import process_diagram, is_valid as is_valid_diagram, complexity_score
 
 USB_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS_DIR = os.path.join(USB_ROOT, "models")
@@ -100,7 +101,49 @@ def load_model():
     )
     _llm_path = current
     print(f"[LLM] Ready — {os.path.basename(current)}")
+    print(f"[LLM] Chat format: {_detect_chat_format(current)}")
     return _llm
+
+
+# ── Chat format detection ──────────────────────────────────────────────────────
+
+def _detect_chat_format(model_path: str) -> str:
+    """Auto-detect chat template from the model filename."""
+    name = os.path.basename(model_path).lower()
+    if "qwen" in name:
+        return "chatml"
+    if "phi" in name:
+        return "phi"
+    if "llama" in name or "mistral" in name or "gemma" in name:
+        return "llama"
+    return "chatml"  # safest default
+
+
+def _build_prompt(system: str, user: str, assistant_start: str = "") -> str:
+    """Build a prompt string using the correct chat template for the loaded model."""
+    fmt = _detect_chat_format(_llm_path or "")
+    if fmt == "chatml":
+        p = (f"<|im_start|>system\n{system}<|im_end|>\n"
+             f"<|im_start|>user\n{user}<|im_end|>\n"
+             f"<|im_start|>assistant\n")
+    elif fmt == "phi":
+        p = (f"<|system|>\n{system}<|end|>\n"
+             f"<|user|>\n{user}<|end|>\n"
+             f"<|assistant|>\n")
+    else:
+        p = (f"[INST] <<SYS>>\n{system}\n<</SYS>>\n"
+             f"{user} [/INST]\n")
+    return p + assistant_start
+
+
+def _stop_tokens() -> list:
+    """Return stop tokens for the loaded model's chat format."""
+    fmt = _detect_chat_format(_llm_path or "")
+    if fmt == "chatml":
+        return ["<|im_end|>", "<|im_start|>", "```\n\n"]
+    elif fmt == "phi":
+        return ["<|end|>", "<|user|>", "```\n\n"]
+    return ["[INST]", "</s>", "```\n\n"]
 
 
 # ── Improvement 1: Diagram prompts with 3 examples each ───────────────────────
@@ -108,32 +151,48 @@ def load_model():
 DIAGRAM_PROMPTS = {
     "flowchart TD": """Output ONLY a Mermaid flowchart. Start with ```mermaid, end with ```.
 
-CRITICAL RULES:
-- NEVER use generic labels like "Start", "End", "Decision", "Process", "Action", "Step 1", "Create", "Send"
-- Every node MUST have a SPECIFIC label describing the ACTUAL thing (e.g. "User submits login form" not "Start")
-- Every arrow label MUST describe the ACTUAL action (e.g. "validates password" not "Yes/No")
-- Include at LEAST 8 nodes with REAL content
-- Use subgraphs to group related steps
+SYNTAX RULES (follow exactly):
+- Use --> for arrows (NOT -> which is invalid)
+- Node IDs: single letters or short words (A, B, C or Login, Auth)
+- Labels in square brackets: A["Label text here"]
+- Decision diamonds: C{"Is condition met?"}
+- Rounded: D("Rounded label")
+- Subgraphs: subgraph Title ... end
+- Arrow labels: A -->|label text| B
+- NO semicolons at end of lines
+- NO pipes | inside node labels
 
-Example — e-commerce checkout:
+CONTENT RULES:
+- NEVER generic: "Start", "End", "Decision", "Process"
+- Every node = SPECIFIC real action (e.g. "User submits login form")
+- At LEAST 10 nodes, use subgraphs to organize
+
+Example:
 ```mermaid
 flowchart TD
-    A[Customer adds items to cart] --> B[Review cart contents]
-    B --> C{Cart total > $50?}
-    C -- Yes --> D[Apply free shipping]
-    C -- No --> E[Calculate shipping fee]
-    D --> F[Enter shipping address]
-    E --> F
-    F --> G[Select payment method]
-    G --> H{Credit card valid?}
-    H -- Yes --> I[Charge payment gateway]
-    H -- No --> J[Show card error message]
-    J --> G
-    I --> K[Generate order confirmation]
-    K --> L[Send confirmation email]
-    L --> M[Update inventory database]
+    subgraph Frontend
+        A["Customer opens product page"] --> B["Add item to shopping cart"]
+        B --> C{"Cart has 3+ items?"}
+        C -->|Yes| D["Show bulk discount banner"]
+        C -->|No| E["Show standard pricing"]
+    end
+    subgraph Checkout
+        D --> F["Enter shipping address"]
+        E --> F
+        F --> G["Select payment method"]
+        G --> H{"Credit card valid?"}
+        H -->|Yes| I["Process payment via Stripe"]
+        H -->|No| J["Display card error"]
+        J --> G
+    end
+    subgraph Fulfillment
+        I --> K["Generate order confirmation"]
+        K --> L["Send confirmation email"]
+        L --> M["Update inventory database"]
+        M --> N["Queue for warehouse picking"]
+    end
 ```
-Now generate a DETAILED flowchart with SPECIFIC, REAL content for:""",
+Now generate a DETAILED, COMPLEX flowchart with subgraphs for:""",
     "sequenceDiagram": """Output ONLY a Mermaid sequenceDiagram. Start with ```mermaid, end with ```.
 
 CRITICAL RULES:
@@ -333,17 +392,28 @@ Answer clearly and concisely in under 250 words.
 If unsure, say you don't know.
 """
 
-DOC_SYSTEM = """You are a reading assistant.
+DOC_SYSTEM = """You are a precise reading assistant.
 
-STRUCTURE YOUR RESPONSE FOR MAXIMUM READABILITY:
-1. USE BOLD HEADERS for different sections.
-2. START with a "### Summary" section (2-3 sentences summarizing the document findings).
-3. FOLLOW with a "### Findings" section using bullet points for specific details.
-4. USE double line breaks between sections to ensure a clean structure.
-5. MENTION the document name at the very end.
+STRUCTURE YOUR RESPONSE:
+1. USE BOLD HEADERS (### Summary, ### Source Findings).
+2. Bullet points for details.
 
-Answer using ONLY the document excerpts provided.
-If not found say: 'The uploaded document does not cover this topic.'
+RULES:
+- Answer ONLY using the provided document excerpts.
+- If the answer isn't in the excerpts, say: 'The uploaded documents do not contain specific information on this.'
+"""
+
+ADAPTIVE_DOC_SYSTEM = """You are an adaptive source-accurate assistant.
+
+Your goal is to provide a highly accurate answer based ONLY on the provided document excerpts.
+
+STRUCTURE:
+1. ### Summary (1-2 sentences)
+2. ### Source Analysis (Detailed bullet points)
+
+STRICTNESS:
+- Do NOT use outside knowledge.
+- If the excerpts are only 'related' but don't answer the question directly, explain what related information IS present instead of guessing.
 """
 
 DOC_DIAGRAM_SYSTEM = """You are a document-to-diagram converter. Read the document and output a Mermaid diagram.
@@ -474,16 +544,16 @@ def _extract_or_fix(text: str) -> str:
 # ── Helpers for document-based diagram generation ──────────────────────────────
 
 def _get_diagram_type_hint(diagram_type: str) -> str:
-    """Return a short syntax hint for the requested diagram type."""
+    """Return syntax rules only — NO copyable example labels."""
     hints = {
-        "flowchart TD": "Syntax: flowchart TD\\n    A[Start] --> B{Decision}\\n    B -- Yes --> C[Action]\\n    B -- No --> D[Other]",
-        "sequenceDiagram": "Syntax: sequenceDiagram\\n    Actor1->>Actor2: action\\n    Actor2-->>Actor1: response",
-        "erDiagram": "Syntax: erDiagram\\n    TABLE1 ||--o{ TABLE2 : has\\n    TABLE1 {\\n        int id PK\\n        string name\\n    }",
-        "classDiagram": "Syntax: classDiagram\\n    Parent <|-- Child\\n    Parent : +String name\\n    Parent : +method()",
-        "stateDiagram-v2": "Syntax: stateDiagram-v2\\n    [*] --> State1\\n    State1 --> State2 : event",
-        "gantt": "Syntax: gantt\\n    title Project\\n    dateFormat YYYY-MM-DD\\n    section Phase\\n    Task1 :a1, 2024-01-01, 10d",
-        "pie": "Syntax: pie title Title\\n    \"Label1\" : 40\\n    \"Label2\" : 30",
-        "mindmap": "Syntax: mindmap\\n  root((Topic))\\n    Branch1\\n      Sub1\\n    Branch2",
+        "flowchart TD": "Arrows: A --> B, Labels: A[\"text\"] for boxes, C{\"question?\"} for diamonds, -->|label| for arrow text, subgraph Title ... end for groups",
+        "sequenceDiagram": "Arrows: ActorA->>ActorB: message, ActorB-->>ActorA: reply, Use participant to declare actors",
+        "erDiagram": "Relations: TABLE1 ||--o{ TABLE2 : relationship, Fields: int id PK, string name",
+        "classDiagram": "Relations: Parent <|-- Child, Fields: +String name, Methods: +methodName()",
+        "stateDiagram-v2": "Transitions: StateA --> StateB : event, Use [*] for start/end",
+        "gantt": "Structure: title, dateFormat YYYY-MM-DD, section Name, TaskName :id, date, duration",
+        "pie": "Structure: pie title ChartTitle, then \"Label\" : value per line",
+        "mindmap": "Structure: root((CenterTopic)), indent branches with spaces",
     }
     return hints.get(diagram_type, hints["flowchart TD"])
 
@@ -527,115 +597,103 @@ def _wrap_partial_mermaid(raw_output: str, diagram_type: str) -> str:
 
 
 def generate(
-    prompt: str, mode: str, context: str = "", diagram_type: str = "flowchart TD"
+    prompt: str, mode: str, context: str = "", diagram_type: str = "flowchart TD", confidence: float = 1.0
 ) -> str:
     llm = load_model()
 
     # ── Diagram ───────────────────────────────────────────────────────────────
     if mode == "diagram":
-        if context:
-            # Document-based diagram: use full context with doc-diagram prompt
-            context = context[:3500]
-            type_hint = _get_diagram_type_hint(diagram_type)
+        type_hint = _get_diagram_type_hint(diagram_type)
+        stops = _stop_tokens()
 
-            full_prompt = (
-                f"<|system|>\n{DOC_DIAGRAM_SYSTEM}<|end|>\n"
-                f"<|user|>\n"
-                f"=== DOCUMENT CONTENT (read every line carefully) ===\n{context}\n=== END OF DOCUMENT ===\n\n"
-                f"User request: {prompt}\n"
-                f"Diagram type: {diagram_type}\n"
-                f"{type_hint}\n"
-                f"REMEMBER: Use ONLY real names, terms, and processes from the document above. "
-                f"NEVER use generic labels like Start, End, Decision, Process. "
-                f"Every node label must contain ACTUAL content from the document.\n"
-                f"<|end|>\n"
-                f"<|assistant|>\n```mermaid\n"
+        # ── System prompt: short & direct (small models work better with less)
+        diagram_sys = (
+            "You generate Mermaid diagrams. Output ONLY the diagram nodes and edges.\n"
+            "RULES: Every node label MUST be specific to the user's topic.\n"
+            "BANNED labels: Start, End, Process, Decision, Action, Step, Node, Other.\n"
+            f"Syntax: {type_hint}"
+        )
+
+        if context:
+            context = context[:3000]
+            user_msg = (
+                f"DOCUMENT:\n{context}\n\n"
+                f"Create a {diagram_type} diagram about: {prompt}\n"
+                f"Use ONLY real terms from the document. 8+ nodes minimum."
             )
-            temp = 0.05
-            max_tokens = 1500
         else:
-            system = DIAGRAM_PROMPTS.get(diagram_type, DIAGRAM_PROMPTS["flowchart TD"])
-            full_prompt = (
-                f"<|system|>\n{system}<|end|>\n"
-                f"<|user|>\n{prompt}\n\nREMEMBER: Every node must have SPECIFIC content about '{prompt}'. NEVER use generic labels like Start, End, Decision.<|end|>\n"
-                f"<|assistant|>\n"
+            user_msg = (
+                f"Create a detailed {diagram_type} diagram about: {prompt}\n"
+                f"Include 10+ nodes with SPECIFIC labels about this exact topic.\n"
+                f"Use subgraphs to organize different sections."
             )
-            temp = 0.15
-            max_tokens = 1024
 
-        result = llm(
-            full_prompt,
-            max_tokens=max_tokens,
-            temperature=temp,
-            stop=["<|end|>", "<|user|>", "```\n\n"],
-            echo=False,
-        )
-        raw_output = result["choices"][0]["text"].strip()
+        # Pre-seed: model just needs to output nodes/edges, not boilerplate
+        prefix = f"```mermaid\n{diagram_type}\n"
+        full_prompt = _build_prompt(diagram_sys, user_msg, prefix)
 
-        # For document-based diagrams, we pre-seeded "```mermaid\n" in the prompt
-        if context:
-            # The output should be the diagram body — wrap it
-            raw_output = _wrap_partial_mermaid(raw_output, diagram_type)
+        temp = 0.2
+        max_tokens = 2048
 
-        extracted = _extract_or_fix(raw_output)
+        def _generate_once(t):
+            r = llm(full_prompt, max_tokens=max_tokens, temperature=t, stop=stops, echo=False)
+            body = r["choices"][0]["text"].strip()
+            # Remove any repeated diagram header the model might echo
+            for hdr in ["```mermaid", "```", diagram_type]:
+                if body.lower().startswith(hdr.lower()):
+                    body = body[len(hdr):].strip()
+            # Build full diagram
+            full = f"```mermaid\n{diagram_type}\n{body}\n```"
+            return process_diagram(full, diagram_type)
 
-        # Validate — retry up to 2 times if invalid or has placeholder labels
-        needs_retry = not _is_valid_mermaid(extracted) or _has_placeholder_labels(extracted)
-        if needs_retry:
-            reason = "placeholder labels" if _has_placeholder_labels(extracted) else "invalid syntax"
-            print(f"[LLM] Diagram rejected ({reason}) — retrying...")
+        processed = _generate_once(temp)
+        score = complexity_score(processed)
+        print(f"[LLM] Diagram attempt 1: score={score}")
+
+        # Retry if too simple or has placeholder labels
+        if score < 6 or _has_placeholder_labels(processed):
+            reason = "too simple" if score < 6 else "placeholder labels"
+            print(f"[LLM] Rejected ({reason}) — retrying...")
             for attempt in range(2):
-                result2 = llm(
-                    full_prompt,
-                    max_tokens=max_tokens,
-                    temperature=0.25 + (attempt * 0.1),
-                    stop=["<|end|>", "<|user|>", "```\n\n"],
-                    echo=False,
-                )
-                raw_output2 = result2["choices"][0]["text"].strip()
-                if context:
-                    raw_output2 = _wrap_partial_mermaid(raw_output2, diagram_type)
-                extracted2 = _extract_or_fix(raw_output2)
-                if _is_valid_mermaid(extracted2) and not _has_placeholder_labels(extracted2):
-                    return extracted2
-            print("[LLM] All retries produced low-quality diagrams")
+                p2 = _generate_once(0.3 + attempt * 0.1)
+                s2 = complexity_score(p2)
+                print(f"[LLM] Retry {attempt+1}: score={s2}")
+                if s2 > score:
+                    processed, score = p2, s2
+                if s2 >= 6 and not _has_placeholder_labels(p2):
+                    break
+            print(f"[LLM] Final diagram score={score}")
 
-        return extracted
+        return processed
 
-    # ── Q&A with documents ────────────────────────────────────────────────────
-    if context:
-        context = context[:4096]
-        full_prompt = (
-            f"<|system|>\n{DOC_SYSTEM}<|end|>\n"
-            f"<|user|>\n"
-            f"=== DOCUMENT EXCERPTS ===\n{context}\n=== END ===\n\n"
-            f"Using ONLY the excerpts above, answer: {prompt}\n"
-            f"<|end|>\n"
-            f"<|assistant|>\nBased on the uploaded document: "
+    # ── Document Q&A (Strict or Adaptive) ──────────────────────────────────
+    if mode == "doc_qa" or (mode == "qa" and context):
+        system_prompt = ADAPTIVE_DOC_SYSTEM if confidence > 0.6 else DOC_SYSTEM
+        stops = _stop_tokens()
+        
+        user_msg = (
+            f"=== DOCUMENT EXCERPTS ===\n{context[:4096]}\n=== END ===\n\n"
+            f"Question: {prompt}"
         )
+        full_prompt = _build_prompt(system_prompt, user_msg)
         result = llm(
             full_prompt,
-            max_tokens=512,
-            temperature=0.2,
-            stop=["<|end|>", "<|user|>"],
+            max_tokens=600,
+            temperature=0.1,
+            stop=stops,
             echo=False,
         )
-        answer = result["choices"][0]["text"].strip()
-        if not answer.lower().startswith("based on"):
-            answer = "Based on the uploaded document: " + answer
-        return answer
+        return result["choices"][0]["text"].strip()
 
     # ── General Q&A ───────────────────────────────────────────────────────────
-    full_prompt = (
-        f"<|system|>\n{GENERAL_SYSTEM}<|end|>\n"
-        f"<|user|>\n{prompt}<|end|>\n"
-        f"<|assistant|>\n"
-    )
+    stops = _stop_tokens()
+    full_prompt = _build_prompt(GENERAL_SYSTEM, prompt)
     result = llm(
         full_prompt,
         max_tokens=512,
         temperature=0.2,
-        stop=["<|end|>", "<|user|>"],
+        stop=stops,
         echo=False,
     )
     return result["choices"][0]["text"].strip()
+

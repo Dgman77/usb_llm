@@ -173,6 +173,11 @@ install_packages() {
     reg_pkg "pydantic"    "pydantic>=2.0.0"
     reg_pkg "rank_bm25"   "rank-bm25>=0.2.2"
     reg_pkg "docx"        "python-docx>=1.1.0"
+    reg_pkg "openpyxl"    "openpyxl>=3.1.0"
+    reg_pkg "pptx"        "python-pptx>=0.6.21"
+    reg_pkg "bs4"         "beautifulsoup4>=4.12.0"
+    reg_pkg "striprtf"    "striprtf>=0.0.26"
+    reg_pkg "PIL"         "Pillow>=10.0.0"
 
     local PKG_TOTAL=${#PKG_FOLDERS[@]}
     local SKIP_COUNT=0 NEED_COUNT=0 FAIL_COUNT=0

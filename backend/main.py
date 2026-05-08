@@ -85,11 +85,18 @@ async def api_generate(req: GenerateRequest):
 
 @app.post("/api/upload")
 async def api_upload(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith((".pdf", ".docx", ".txt")):
-        raise HTTPException(400, "Only PDF, DOCX, or TXT files supported")
+    supported = (
+        ".pdf", ".docx", ".txt", ".csv", ".xlsx", ".pptx", ".html", ".htm",
+        ".md", ".json", ".xml", ".rtf", ".log", ".py", ".js", ".ts", ".css",
+        ".yaml", ".yml", ".ini", ".cfg", ".toml",
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".webp"
+    )
+    if not file.filename.lower().endswith(supported):
+        raise HTTPException(400, f"Unsupported file type. Supported: {', '.join(supported)}")
+    
     contents = await file.read()
-    if len(contents) > 50 * 1024 * 1024:
-        raise HTTPException(400, "File too large (max 50MB)")
+    if len(contents) > 100 * 1024 * 1024:  # Increased to 100MB for larger docs/images
+        raise HTTPException(400, "File too large (max 100MB)")
     try:
         n = add_document(contents, file.filename)
     except Exception as e:
