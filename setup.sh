@@ -171,7 +171,7 @@ install_packages() {
     reg_pkg "faiss"       "faiss-cpu>=1.7.4"
     reg_pkg "numpy"       "numpy>=1.24.0,<2.0.0"
     reg_pkg "pydantic"    "pydantic>=2.0.0"
-    reg_pkg "rank_bm25"   "rank-bm25>=0.2.2"
+
     reg_pkg "docx"        "python-docx>=1.1.0"
     reg_pkg "openpyxl"    "openpyxl>=3.1.0"
     reg_pkg "pptx"        "python-pptx>=0.6.21"
@@ -382,8 +382,8 @@ verify_imports() {
     echo ""
 
     local V_FAIL=0
-    local IMPORTS=("fastapi"  "uvicorn"  "multipart"      "aiofiles"  "fitz"          "faiss"     "numpy"  "pydantic"  "rank_bm25"  "docx"        "llama_cpp")
-    local LABELS=( "fastapi"  "uvicorn"  "python-multipart" "aiofiles" "PyMuPDF (fitz)" "faiss-cpu" "numpy" "pydantic"  "rank-bm25"  "python-docx" "llama_cpp")
+    local IMPORTS=("fastapi"  "uvicorn"  "multipart"      "aiofiles"  "fitz"          "faiss"     "numpy"  "pydantic"  "docx"        "llama_cpp")
+    local LABELS=( "fastapi"  "uvicorn"  "python-multipart" "aiofiles" "PyMuPDF (fitz)" "faiss-cpu" "numpy" "pydantic"  "python-docx" "llama_cpp")
 
     for (( i=0; i<${#IMPORTS[@]}; i++ )); do
         if "$PY" -c "import ${IMPORTS[$i]}" &>/dev/null 2>&1; then
@@ -434,12 +434,38 @@ clean_pycache() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# CREATE MODELS FOLDER
+# CREATE MODELS FOLDER & DOWNLOAD MODELS
 # ─────────────────────────────────────────────────────────────
 create_models_dir() {
     if [[ ! -d "$ROOT/models" ]]; then
         mkdir -p "$ROOT/models"
         echo -e "[${GREEN}OK${RESET}] Created models/ folder"
+    fi
+
+    # Download Embedding Model
+    if [[ ! -f "$ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf" ]]; then
+        echo "Downloading embedding model: nomic-embed-text-v1.5.Q8_0.gguf (~137MB) ..."
+        download "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf" "$ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf"
+        if [[ -f "$ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf" ]]; then
+            echo -e "[${GREEN}OK${RESET}] Embedding model downloaded."
+        else
+            echo -e "[${YELLOW}WARNING${RESET}] Failed to download embedding model."
+        fi
+    else
+        echo -e "[${CYAN}SKIP${RESET}] Embedding model already exists."
+    fi
+
+    # Download Reranker Model
+    if [[ ! -f "$ROOT/models/bge-reranker-v2-m3-Q8_0.gguf" ]]; then
+        echo "Downloading reranker model: bge-reranker-v2-m3-Q8_0.gguf (~570MB) ..."
+        download "https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q8_0.gguf" "$ROOT/models/bge-reranker-v2-m3-Q8_0.gguf"
+        if [[ -f "$ROOT/models/bge-reranker-v2-m3-Q8_0.gguf" ]]; then
+            echo -e "[${GREEN}OK${RESET}] Reranker model downloaded."
+        else
+            echo -e "[${YELLOW}WARNING${RESET}] Failed to download reranker model."
+        fi
+    else
+        echo -e "[${CYAN}SKIP${RESET}] Reranker model already exists."
     fi
 }
 

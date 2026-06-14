@@ -19,18 +19,46 @@ MODELS_DIR = os.path.join(USB_ROOT, "models")
 
 # ── Model finder ───────────────────────────────────────────────────────────────
 
+import gc
+
+def _sanitize_path(raw: str) -> str:
+    """Clean up path strings that may have escaped backslashes."""
+    # Fix double-escaped backslashes (\\\\) → single backslash
+    cleaned = raw.strip().strip('"').strip("'").strip()
+    cleaned = cleaned.replace('\\\\', '\\')
+    cleaned = cleaned.replace('\\\\', '\\')  # second pass for quad-escaped
+    return cleaned
+
+
+def _prefer_quantized(files: list) -> list:
+    """Sort model files to prefer smaller quantized models (Q4 > Q5 > Q6 > Q8 > FP16).
+    This ensures 8GB RAM systems load the smallest workable model first."""
+    def _quant_priority(path):
+        name = os.path.basename(path).lower()
+        if 'q4_' in name or 'q4-' in name: return 0
+        if 'q5_' in name or 'q5-' in name: return 1
+        if 'q6_' in name or 'q6-' in name: return 2
+        if 'q8_' in name or 'q8-' in name: return 3
+        if 'fp16' in name or 'f16' in name: return 4
+        return 5  # unknown quantization
+    return sorted(files, key=_quant_priority)
+
 
 def find_model() -> str:
     path_file = os.path.join(MODELS_DIR, "model_path.txt")
     if os.path.exists(path_file):
         with open(path_file, "r", encoding="utf-8") as f:
-            saved = f.read().strip().strip('"').strip()
-        if os.path.exists(saved):
+            saved = _sanitize_path(f.read())
+        if saved and os.path.exists(saved):
             print(f"[LLM] Model  : {os.path.basename(saved)}")
             return saved
+        else:
+            print(f"[LLM] Saved model path invalid or not found: {saved!r}")
     gguf_files = glob.glob(os.path.join(MODELS_DIR, "*.gguf"))
-    if gguf_files:
-        chosen = sorted(gguf_files)[0]
+    chat_files = [f for f in gguf_files if "embed" not in os.path.basename(f).lower() and "rerank" not in os.path.basename(f).lower()]
+    if chat_files:
+        chat_files = _prefer_quantized(chat_files)
+        chosen = chat_files[0]
         print(f"[LLM] Model  : {os.path.basename(chosen)}")
         return chosen
     for folder in [
@@ -39,10 +67,15 @@ def find_model() -> str:
         r"E:\models",
         r"C:\models",
         os.path.expanduser("~/Downloads"),
+        os.path.join(os.path.expanduser("~/Downloads"), "models"),
     ]:
+        if not os.path.exists(folder):
+            continue
         hits = glob.glob(os.path.join(folder, "*.gguf"))
-        if hits:
-            chosen = hits[0]
+        chat_hits = [f for f in hits if "embed" not in os.path.basename(f).lower() and "rerank" not in os.path.basename(f).lower()]
+        if chat_hits:
+            chat_hits = _prefer_quantized(chat_hits)
+            chosen = chat_hits[0]
             print(f"[LLM] Model  : {os.path.basename(chosen)}")
             os.makedirs(MODELS_DIR, exist_ok=True)
             with open(path_file, "w", encoding="utf-8") as f:
@@ -59,6 +92,51 @@ def get_model_name() -> str:
         return os.path.basename(find_model())
     except Exception:
         return "No model loaded"
+
+
+def find_available_models() -> list[dict]:
+    available = []
+    seen_paths = set()
+    search_paths = [
+        MODELS_DIR,
+        r"D:\models",
+        r"D:\model",
+        r"E:\models",
+        r"C:\models",
+        os.path.expanduser("~/Downloads"),
+        os.path.join(os.path.expanduser("~/Downloads"), "models")
+    ]
+    active_path = None
+    try:
+        active_path = find_model()
+    except Exception:
+        pass
+    for folder in search_paths:
+        if not os.path.exists(folder):
+            continue
+        hits = glob.glob(os.path.join(folder, "*.gguf"))
+        for h in hits:
+            name_lower = os.path.basename(h).lower()
+            if "embed" in name_lower or "rerank" in name_lower:
+                continue
+            abs_path = os.path.abspath(h)
+            if abs_path not in seen_paths:
+                seen_paths.add(abs_path)
+                available.append({
+                    "name": os.path.basename(h),
+                    "path": abs_path,
+                    "active": (abs_path == os.path.abspath(active_path)) if active_path else False
+                })
+    return available
+
+
+def switch_model(path: str):
+    path_file = os.path.join(MODELS_DIR, "model_path.txt")
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    with open(path_file, "w", encoding="utf-8") as f:
+        f.write(path)
+    unload_model()
+    load_model()
 
 
 def user_wants_doc_search(message: str) -> bool:
@@ -79,28 +157,128 @@ def user_wants_doc_search(message: str) -> bool:
 
 _llm = None
 _llm_path = None
+_model_type = None  # "chat" or "embed"
+
+
+def unload_model():
+    global _llm, _llm_path, _model_type
+    if _llm is not None:
+        print(f"[LLM] Unloading model: {_llm_path}")
+        _llm = None
+        _llm_path = None
+        _model_type = None
+        gc.collect()
+
+
+def get_chat_model():
+    return load_model()
+
+
+def get_embed_model():
+    global _llm, _llm_path, _model_type
+    embed_path = os.path.join(MODELS_DIR, "nomic-embed-text-v1.5.Q8_0.gguf")
+    if not os.path.exists(embed_path):
+        hits = glob.glob(os.path.join(MODELS_DIR, "*embed*.gguf"))
+        if hits:
+            embed_path = hits[0]
+    if not os.path.exists(embed_path):
+        raise FileNotFoundError("Embedding model GGUF not found. Please run setup.bat.")
+    if _model_type == "embed" and _llm_path == embed_path:
+        return _llm
+    unload_model()
+    print(f"[LLM] Loading embedding model: {os.path.basename(embed_path)}")
+    try:
+        _llm = Llama(
+            model_path=embed_path,
+            embedding=True,
+            n_ctx=512,
+            n_threads=max(2, (os.cpu_count() or 4) // 2),
+            verbose=False,
+        )
+    except Exception as e:
+        print(f"[LLM] ERROR loading embedding model: {e}")
+        raise
+    _llm_path = embed_path
+    _model_type = "embed"
+    return _llm
+
+
+# Dedicated reranker model (BGE reranker GGUF)
+_reranker = None
+_reranker_path = None
+
+
+def get_reranker_model():
+    """Load the dedicated BGE reranker model for cross-encoding.
+    Falls back to None if not available (caller should use FAISS scores)."""
+    global _reranker, _reranker_path
+    reranker_path = None
+    hits = glob.glob(os.path.join(MODELS_DIR, "*rerank*.gguf"))
+    if hits:
+        reranker_path = hits[0]
+    if reranker_path is None or not os.path.exists(reranker_path):
+        return None
+    if _reranker is not None and _reranker_path == reranker_path:
+        return _reranker
+    # Unload any existing reranker
+    unload_reranker()
+    print(f"[LLM] Loading reranker model: {os.path.basename(reranker_path)}")
+    try:
+        _reranker = Llama(
+            model_path=reranker_path,
+            embedding=True,
+            n_ctx=512,
+            n_threads=max(2, (os.cpu_count() or 4) // 2),
+            verbose=False,
+        )
+        _reranker_path = reranker_path
+    except Exception as e:
+        print(f"[LLM] Reranker load failed: {e} — will use FAISS scores")
+        _reranker = None
+        _reranker_path = None
+    return _reranker
+
+
+def unload_reranker():
+    global _reranker, _reranker_path
+    if _reranker is not None:
+        print(f"[LLM] Unloading reranker: {_reranker_path}")
+        _reranker = None
+        _reranker_path = None
+        gc.collect()
 
 
 def load_model():
-    global _llm, _llm_path
+    global _llm, _llm_path, _model_type
     current = find_model()
-    if _llm is not None and _llm_path == current:
+    if _model_type == "chat" and _llm_path == current:
         return _llm
-    if _llm_path and _llm_path != current:
-        print(f"[LLM] Switching → {os.path.basename(current)}")
-    else:
-        print("[LLM] Loading model (30-60s)...")
-    _llm = Llama(
-        model_path=current,
-        n_ctx=4096,
-        n_threads=max(4, os.cpu_count() or 4),
-        n_batch=256,
-        use_mmap=True,
-        use_mlock=False,
-        verbose=False,
-    )
+    unload_model()
+    # Also unload reranker before loading chat model on 8GB systems
+    unload_reranker()
+    print(f"[LLM] Loading chat model: {os.path.basename(current)}")
+    # Use smaller context (2048) to save ~1GB RAM on 8GB systems
+    n_ctx = 2048
+    n_threads = max(2, (os.cpu_count() or 4) // 2)
+    try:
+        _llm = Llama(
+            model_path=current,
+            n_ctx=n_ctx,
+            n_threads=n_threads,
+            n_batch=256,
+            use_mmap=True,
+            use_mlock=False,
+            verbose=False,
+        )
+    except Exception as e:
+        print(f"[LLM] ERROR loading chat model: {e}")
+        _llm = None
+        _llm_path = None
+        _model_type = None
+        raise
     _llm_path = current
-    print(f"[LLM] Ready — {os.path.basename(current)}")
+    _model_type = "chat"
+    print(f"[LLM] Ready — {os.path.basename(current)} (ctx={n_ctx}, threads={n_threads})")
     print(f"[LLM] Chat format: {_detect_chat_format(current)}")
     return _llm
 
@@ -696,4 +874,64 @@ def generate(
         echo=False,
     )
     return result["choices"][0]["text"].strip()
+
+
+def generate_hyde_passage(query: str) -> str:
+    """Generate a hypothetical document passage that answers the query."""
+    llm = load_model()
+    stops = _stop_tokens()
+    system = "You are a helpful assistant. Write a short paragraph (3-4 sentences) that directly answers the user's question. Write it as a factual statement in a document."
+    user = f"Question: {query}"
+    prompt = _build_prompt(system, user)
+    res = llm(prompt, max_tokens=150, temperature=0.3, stop=stops, echo=False)
+    return res["choices"][0]["text"].strip()
+
+
+def score_chunk_relevance(query: str, chunk_text: str) -> float:
+    """Evaluate chunk relevance to query, return a score between 0.0 and 1.0."""
+    llm = load_model()
+    stops = _stop_tokens()
+    system = (
+        "You are an expert evaluator. Rate the relevance of the text chunk to the query on a scale from 0.0 to 1.0.\n"
+        "0.0 means completely irrelevant.\n"
+        "1.0 means the chunk contains the exact, direct answer to the query.\n"
+        "Output ONLY the numeric score (e.g. 0.85). Do not include any explanation."
+    )
+    user = f"Query: {query}\n\nChunk: {chunk_text}\n\nRelevance Score (0.0 to 1.0):"
+    prompt = _build_prompt(system, user)
+    res = llm(prompt, max_tokens=10, temperature=0.0, stop=stops, echo=False)
+    output = res["choices"][0]["text"].strip()
+    try:
+        match = re.search(r"[-+]?\d*\.\d+|\d+", output)
+        if match:
+            score = float(match.group())
+            return max(0.0, min(1.0, score))
+    except Exception:
+        pass
+    return 0.5
+
+
+def evaluate_sufficiency(query: str, context: str) -> float:
+    """Evaluate if context contains enough information to answer the query, return a score from 0.0 to 1.0."""
+    llm = load_model()
+    stops = _stop_tokens()
+    system = (
+        "You are a strict QA auditor. Assess whether the provided context contains sufficient information to fully answer the query.\n"
+        "Score from 0.0 to 1.0:\n"
+        "0.0 means the context has no relevant information at all.\n"
+        "1.0 means the context contains complete and sufficient information to answer the query.\n"
+        "Output ONLY the numeric score (e.g. 0.9). Do not include any explanation."
+    )
+    user = f"Query: {query}\n\nContext:\n{context}\n\nSufficiency Score (0.0 to 1.0):"
+    prompt = _build_prompt(system, user)
+    res = llm(prompt, max_tokens=10, temperature=0.0, stop=stops, echo=False)
+    output = res["choices"][0]["text"].strip()
+    try:
+        match = re.search(r"[-+]?\d*\.\d+|\d+", output)
+        if match:
+            score = float(match.group())
+            return max(0.0, min(1.0, score))
+    except Exception:
+        pass
+    return 0.5
 

@@ -554,9 +554,16 @@
     <div id="doc-list" style="margin-top:10px;"></div>
   </div>
 
-  <div style="margin-top:auto; display:flex; align-items:center; gap:8px;">
-    <div id="status-dot" class="loading"></div>
-    <span id="status-text">Loading model...</span>
+  <div style="margin-top:auto; display:flex; flex-direction:column; gap:12px;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div id="status-dot" class="loading"></div>
+      <span id="status-text">Loading model...</span>
+    </div>
+    <div id="model-selector-container" style="display:none; flex-direction:column; gap:6px;">
+      <span class="section-label" style="font-size:10px; margin-bottom:0;">Active Model</span>
+      <select id="model-select" onchange="switchModel(this.value)" style="width:100%; padding:8px 10px; border-radius:8px; background:var(--surface); color:var(--text); border:1px solid var(--border); font-family:'DM Mono', monospace; font-size:11px; outline:none; cursor:pointer;">
+      </select>
+    </div>
   </div>
 </aside>
 
@@ -652,13 +659,70 @@
     setTheme(currentTheme === 'dark' ? 'light' : 'dark');
   });
 
-  // ── Status poll ────────────────────────────────────────
+  // ── Status poll & Model Selector ──────────────────────
+  let availableModels = [];
+  
+  async function loadModels() {
+    try {
+      const r = await fetch('/api/models');
+      if (r.ok) {
+        const data = await r.json();
+        availableModels = data.models;
+        const select = document.getElementById('model-select');
+        select.innerHTML = '';
+        
+        availableModels.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.path;
+          opt.textContent = m.name;
+          opt.selected = m.active;
+          select.appendChild(opt);
+        });
+        
+        if (availableModels.length > 0) {
+          document.getElementById('model-selector-container').style.display = 'flex';
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load models:", e);
+    }
+  }
+
+  async function switchModel(path) {
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    statusDot.className = 'loading';
+    statusText.textContent = 'Switching model...';
+    try {
+      const r = await fetch('/api/models/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: path })
+      });
+      if (r.ok) {
+        const data = await r.json();
+        statusDot.className = 'ready';
+        statusText.textContent = 'Model ready';
+        showToast(`Switched to ${data.active}`);
+        loadModels();
+      } else {
+        showToast("Failed to switch model");
+        checkStatus();
+      }
+    } catch {
+      showToast("Error connecting to server");
+      checkStatus();
+    }
+  }
+
   async function checkStatus() {
     try {
       const r = await fetch('/api/status');
       if (r.ok) {
+        const data = await r.json();
         document.getElementById('status-dot').className = 'ready';
         document.getElementById('status-text').textContent = 'Model ready';
+        loadModels();
       }
     } catch {
       document.getElementById('status-dot').className = 'loading';
@@ -757,6 +821,23 @@
     badge.className = `mode-badge mode-${mode}`;
     badge.textContent = mode === 'diagram' ? 'Diagram' : 'Answer';
     wrapper.appendChild(badge);
+
+    if (data.crag_status) {
+      const cragBadge = document.createElement('span');
+      cragBadge.className = 'mode-badge';
+      cragBadge.style.marginLeft = '6px';
+      if (data.crag_status === 'verified_answer') {
+        cragBadge.className += ' mode-qa'; // reuse teal styling
+        cragBadge.textContent = `CRAG Verified (${data.crag_score})`;
+        cragBadge.title = data.crag_reason;
+      } else {
+        cragBadge.style.background = 'var(--red-light)';
+        cragBadge.style.color = 'var(--red)';
+        cragBadge.textContent = 'CRAG Insufficient Context';
+        cragBadge.title = data.crag_reason;
+      }
+      wrapper.appendChild(cragBadge);
+    }
 
     if (mode === 'diagram') {
       const { mermaidCode, extraText } = extractMermaidWithText(response);

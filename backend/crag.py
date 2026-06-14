@@ -1,0 +1,151 @@
+"""
+crag.py — CRAG (Corrective RAG) Evaluation Layer
+
+Acts as a gatekeeper between retrieval and LLM generation.
+Evaluates whether retrieved chunks are *actually relevant and sufficient*
+to answer the user's query. If chunks fail evaluation, the system returns
+a refusal message WITHOUT passing to the LLM — eliminating hallucination
+at the retrieval stage.
+
+Evaluation signals (lightweight — no extra LLM calls):
+  1. Rerank scores:  Are the top chunks scored highly by the reranker?
+  2. Coverage check:  Do the chunks contain query-relevant keywords?
+  3. Density check:   Is there enough content volume to answer the query?
+
+Design note: Previous version called evaluate_sufficiency() which loaded the
+full chat model mid-pipeline, causing catastrophic memory swaps on 8GB systems.
+This version uses heuristic signals only — fast and memory-safe.
+
+Reference: Yan et al., "Corrective Retrieval Augmented Generation" (2024)
+"""
+
+import re
+
+
+# ── Thresholds ────────────────────────────────────────────────
+RERANK_THRESHOLD = 0.30       # Minimum average rerank score to pass
+COVERAGE_THRESHOLD = 0.20     # Minimum query term coverage in chunks
+DENSITY_THRESHOLD = 100       # Minimum character count in context
+COMBINED_THRESHOLD = 0.35     # Minimum combined score to pass
+
+
+def evaluate(query: str, chunks: list[dict]) -> dict:
+    """
+    Evaluate if retrieved chunks are relevant and sufficient to answer the query.
+    Uses lightweight heuristic signals — NO LLM calls (saves memory on 8GB systems).
+    
+    Args:
+        query:  The user's original question
+        chunks: List of reranked chunk dicts with 'text', 'parent_text', 'rerank_score'
+        
+    Returns:
+        {
+            "pass": bool,           # True if chunks are sufficient
+            "score": float,         # Combined confidence 0.0–1.0
+            "reason": str,          # Human-readable evaluation reason
+            "context": str,         # Assembled context string (if pass)
+        }
+    """
+    if not chunks:
+        return {
+            "pass": False,
+            "score": 0.0,
+            "reason": "No chunks retrieved",
+            "context": "",
+        }
+
+    # ── Signal 1: Rerank score analysis ───────────────────────
+    rerank_scores = [c.get("rerank_score", 0.0) for c in chunks]
+    avg_rerank = sum(rerank_scores) / len(rerank_scores)
+    top_rerank = max(rerank_scores)
+    rerank_signal = min(1.0, (avg_rerank + top_rerank) / 2)
+
+    # ── Signal 2: Query term coverage ─────────────────────────
+    query_terms = set(_tokenize(query))
+    if query_terms:
+        all_chunk_text = " ".join(
+            (c.get("parent_text") or c.get("text", "")) for c in chunks
+        ).lower()
+        covered = sum(1 for t in query_terms if t in all_chunk_text)
+        coverage_signal = covered / len(query_terms)
+    else:
+        coverage_signal = 0.0
+
+    # ── Signal 3: Content density check ───────────────────────
+    context = _build_context(chunks)
+    content_length = len(context)
+    density_signal = min(1.0, content_length / 500)  # Saturates at 500 chars
+
+    # ── Combined score ────────────────────────────────────────
+    # Weighted: rerank quality (40%) + coverage (35%) + density (25%)
+    combined = (rerank_signal * 0.40) + (coverage_signal * 0.35) + (density_signal * 0.25)
+
+    passed = combined >= COMBINED_THRESHOLD and content_length >= DENSITY_THRESHOLD
+
+    # Build reason string
+    if passed:
+        reason = (f"Context verified (score={combined:.2f}): "
+                  f"rerank={rerank_signal:.2f}, coverage={coverage_signal:.2f}, "
+                  f"density={density_signal:.2f}")
+    else:
+        reasons = []
+        if rerank_signal < RERANK_THRESHOLD:
+            reasons.append(f"low rerank quality ({rerank_signal:.2f})")
+        if coverage_signal < COVERAGE_THRESHOLD:
+            reasons.append(f"poor query coverage ({coverage_signal:.2f})")
+        if content_length < DENSITY_THRESHOLD:
+            reasons.append(f"insufficient content ({content_length} chars)")
+        if not reasons:
+            reasons.append(f"combined score too low ({combined:.2f})")
+        reason = f"Context rejected (score={combined:.2f}): " + "; ".join(reasons)
+
+    print(f"[CRAG] {'PASS' if passed else 'FAIL'} | {reason}")
+
+    return {
+        "pass": passed,
+        "score": round(combined, 3),
+        "reason": reason,
+        "context": context if passed else "",
+    }
+
+
+def _build_context(chunks: list[dict], max_chars: int = 3500) -> str:
+    """Assemble context string from chunks, preferring parent chunks."""
+    context = ""
+    seen = set()
+
+    for chunk in chunks:
+        text = chunk.get("parent_text") or chunk.get("text", "")
+        # Deduplicate by first 80 chars
+        key = text[:80]
+        if key in seen:
+            continue
+        seen.add(key)
+
+        part = f"[Source: {chunk.get('doc', '?')}, page {chunk.get('page', '?')}]\n{text}\n\n"
+        if len(context) + len(part) > max_chars:
+            break
+        context += part
+
+    return context.strip()
+
+
+def _tokenize(text: str) -> list[str]:
+    """Simple tokenization for coverage check."""
+    # Remove common stop words and return meaningful terms
+    stop = {
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "shall", "can", "to", "of", "in", "for",
+        "on", "with", "at", "by", "from", "as", "into", "through", "during",
+        "before", "after", "above", "below", "between", "out", "off", "over",
+        "under", "again", "further", "then", "once", "here", "there", "when",
+        "where", "why", "how", "all", "each", "every", "both", "few", "more",
+        "most", "other", "some", "such", "no", "nor", "not", "only", "own",
+        "same", "so", "than", "too", "very", "just", "because", "and", "but",
+        "or", "if", "while", "about", "up", "its", "it", "this", "that",
+        "what", "which", "who", "whom", "me", "my", "i", "you", "your",
+        "he", "she", "we", "they", "his", "her", "our", "their",
+    }
+    words = re.findall(r"\b[a-z]{2,}\b", text.lower())
+    return [w for w in words if w not in stop]

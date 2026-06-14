@@ -14,7 +14,6 @@ import html as html_mod
 import xml.etree.ElementTree as ET
 import numpy as np
 
-from rank_bm25 import BM25Okapi
 import faiss
 import fitz                           # PDF + images → PyMuPDF
 from docx import Document as DocxDoc  # DOCX → python-docx
@@ -53,88 +52,69 @@ except ImportError:
 
 # ── State (in-memory only) ────────────────────────────────
 _chunks = []
-_tokenized = []
+_parent_chunks = []
 _chunk_doc = []
 _chunk_page = []
 _chunk_type = []        # "text" | "image_meta"
 _doc_names = []
+_embeddings = []        # list of list of floats
 _images = {}            # doc_name → [{data, ext, page, desc}, ...]
-_vocab = {}
-
-_bm25 = None
 _faiss_index = None
 
 
-# ── Tokenize ──────────────────────────────────────────────
-def _tokenize(text: str):
-    return re.findall(r"\b[a-z]{2,}\b", text.lower())
+# ── Chunking by Tokens ────────────────────────────────────
+def chunk_text_by_tokens(text: str, model, chunk_size: int, overlap: int) -> list[str]:
+    """Split text into chunks of specified tokens with overlap using model tokenizer."""
+    try:
+        tokens = model.tokenize(text.encode('utf-8', errors='ignore'))
+    except Exception as e:
+        print(f"[RAG] Tokenizer failed: {e} — falling back to word-based approximation")
+        # Fallback to word-based chunking if model tokenizer fails
+        words = text.split()
+        chunks = []
+        i = 0
+        while i < len(words):
+            chunk_words = words[i : i + chunk_size]
+            chunks.append(" ".join(chunk_words))
+            if i + chunk_size >= len(words):
+                break
+            i += (chunk_size - overlap)
+        return chunks
 
-
-# ── Chunking with overlap ────────────────────────────────
-def chunk_text(text: str, max_chars: int = 600, overlap: int = 80):
-    paragraphs = re.split(r"\n\s*\n", text)
     chunks = []
-
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-        if len(para) <= max_chars:
-            chunks.append(para)
-        else:
-            sentences = re.split(r"(?<=[.?!])\s+", para)
-            current = ""
-            for sent in sentences:
-                sent = sent.strip()
-                if not sent:
-                    continue
-                if len(current) + len(sent) + 1 <= max_chars:
-                    current += (" " + sent) if current else sent
-                else:
-                    if current:
-                        chunks.append(current.strip())
-                    if overlap > 0 and len(current) > overlap:
-                        current = current[-overlap:] + " " + sent
-                    else:
-                        current = sent
-            if current:
-                chunks.append(current.strip())
-
-    return chunks if chunks else [text[:max_chars]]
+    i = 0
+    while i < len(tokens):
+        chunk_tokens = tokens[i : i + chunk_size]
+        try:
+            chunk_text = model.detokenize(chunk_tokens).decode('utf-8', errors='ignore')
+        except Exception:
+            chunk_text = ""
+        if chunk_text.strip():
+            chunks.append(chunk_text)
+        if i + chunk_size >= len(tokens):
+            break
+        i += (chunk_size - overlap)
+    return chunks if chunks else [text]
 
 
-# ── Build Hybrid Index ────────────────────────────────────
+# ── Build FAISS Index ─────────────────────────────────────
 def _rebuild():
-    global _bm25, _faiss_index, _tokenized, _vocab
-
-    if not _chunks:
-        _bm25 = None
+    global _faiss_index
+    if not _embeddings:
         _faiss_index = None
         return
 
-    _tokenized = [_tokenize(c) for c in _chunks]
-    _bm25 = BM25Okapi(_tokenized)
+    dim = len(_embeddings[0])
+    mat = np.array(_embeddings, dtype="float32")
 
-    vocab = {}
-    for tokens in _tokenized:
-        for t in tokens:
-            if t not in vocab:
-                vocab[t] = len(vocab)
+    # Normalize each vector for Cosine Similarity (via Inner Product Flat index)
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    norms = np.where(norms == 0, 1.0, norms)
+    mat = mat / norms
 
-    dim = max(len(vocab), 1)
-    mat = np.zeros((len(_chunks), dim), dtype="float32")
-
-    for i, tokens in enumerate(_tokenized):
-        for t in tokens:
-            if t in vocab:
-                mat[i][vocab[t]] += 1
-        norm = np.linalg.norm(mat[i])
-        if norm > 0:
-            mat[i] /= norm
-
-    _faiss_index = faiss.IndexFlatIP(dim)
+    _faiss_index = faiss.IndexFlatIP(mat.shape[1])
     _faiss_index.add(mat)
-    _vocab = vocab
+    print(f"[RAG] FAISS Index rebuilt with {len(_embeddings)} chunks (dim={dim})")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -381,7 +361,7 @@ def get_supported_formats() -> list[str]:
 
 # ── Add Document ──────────────────────────────────────────
 def add_document(file_bytes: bytes, filename: str) -> int:
-    global _chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names
+    global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names, _embeddings, _faiss_index
 
     if filename in _doc_names:
         return 0
@@ -398,45 +378,99 @@ def add_document(file_bytes: bytes, filename: str) -> int:
     else:
         pages, images = result, []
 
+    from llm import get_embed_model, unload_model
+    embed_model = get_embed_model()
+
     count = 0
+    new_chunks = []
+    new_parents = []
+    new_docs = []
+    new_pages = []
+    new_types = []
+    new_vectors = []
+
+    # 1. Chunk text by tokens
     for page_num, text in pages:
         if not text.strip():
             continue
-        for chunk in chunk_text(text):
-            _chunks.append(chunk)
-            _chunk_doc.append(filename)
-            _chunk_page.append(page_num)
-            _chunk_type.append("text")
-            count += 1
+        
+        # Parent chunking (512 tokens, 50 token overlap)
+        parent_texts = chunk_text_by_tokens(text, embed_model, chunk_size=512, overlap=50)
+        
+        for parent_text in parent_texts:
+            # Small chunking (256 tokens, 50 token overlap)
+            small_texts = chunk_text_by_tokens(parent_text, embed_model, chunk_size=256, overlap=50)
+            
+            for small_text in small_texts:
+                if not small_text.strip():
+                    continue
+                new_chunks.append(small_text)
+                new_parents.append(parent_text)
+                new_docs.append(filename)
+                new_pages.append(page_num)
+                new_types.append("text")
+                count += 1
 
-    # Store image metadata as searchable chunks
+    # Store image metadata
     if images:
         _images[filename] = images
         for img_info in images:
             meta_chunk = f"[Image in {filename}] {img_info['desc']}"
-            _chunks.append(meta_chunk)
-            _chunk_doc.append(filename)
-            _chunk_page.append(img_info.get("page", 1))
-            _chunk_type.append("image_meta")
+            new_chunks.append(meta_chunk)
+            new_parents.append(meta_chunk)
+            new_docs.append(filename)
+            new_pages.append(img_info.get("page", 1))
+            new_types.append("image_meta")
             count += 1
 
+    # 2. Embed all small chunks
+    for chunk in new_chunks:
+        try:
+            res = embed_model.create_embedding(chunk)
+            vector = res["data"][0]["embedding"]
+            new_vectors.append(vector)
+        except Exception as e:
+            print(f"[RAG] Embedding failed for chunk: {e}")
+            # Fallback to random/zero vector if embedding fails
+            dim = 768  # default for nomic
+            if _embeddings:
+                dim = len(_embeddings[0])
+            new_vectors.append([0.0] * dim)
+
+    # 3. Add to state
+    _chunks.extend(new_chunks)
+    _parent_chunks.extend(new_parents)
+    _chunk_doc.extend(new_docs)
+    _chunk_page.extend(new_pages)
+    _chunk_type.extend(new_types)
+    _embeddings.extend(new_vectors)
     _doc_names.append(filename)
+
+    # Rebuild FAISS index
     _rebuild()
+
+    # Unload embed model to free memory
+    unload_model()
+
     return count
 
 
 # ── Remove Document ───────────────────────────────────────
 def remove_document(filename: str) -> bool:
-    global _chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names
+    global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names, _embeddings
 
     if filename not in _doc_names:
         return False
 
     keep = [i for i in range(len(_chunks)) if _chunk_doc[i] != filename]
+    
     _chunks = [_chunks[i] for i in keep]
+    _parent_chunks = [_parent_chunks[i] for i in keep]
     _chunk_doc = [_chunk_doc[i] for i in keep]
     _chunk_page = [_chunk_page[i] for i in keep]
     _chunk_type = [_chunk_type[i] for i in keep]
+    _embeddings = [_embeddings[i] for i in keep]
+    
     _doc_names.remove(filename)
     _images.pop(filename, None)
 
@@ -446,102 +480,87 @@ def remove_document(filename: str) -> bool:
 
 # ── Clear All ─────────────────────────────────────────────
 def clear_all():
-    global _chunks, _tokenized, _chunk_doc, _chunk_page, _chunk_type
-    global _doc_names, _bm25, _faiss_index, _images
-    _chunks.clear(); _tokenized.clear(); _chunk_doc.clear()
-    _chunk_page.clear(); _chunk_type.clear(); _doc_names.clear()
+    global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names, _embeddings, _faiss_index, _images
+    _chunks.clear()
+    _parent_chunks.clear()
+    _chunk_doc.clear()
+    _chunk_page.clear()
+    _chunk_type.clear()
+    _embeddings.clear()
+    _doc_names.clear()
     _images.clear()
-    _bm25 = None
     _faiss_index = None
+    
+    from llm import unload_model
+    unload_model()
 
 
-# ── Query Vector ──────────────────────────────────────────
-def _vectorize_query(tokens: list[str]) -> np.ndarray:
-    vec = np.zeros(len(_vocab), dtype="float32")
-    for t in tokens:
-        if t in _vocab:
-            vec[_vocab[t]] += 1
-    norm = np.linalg.norm(vec)
-    return vec / norm if norm > 0 else vec
+# ── Search Chunks (Dense Vector) ──────────────────────────
+def search_chunks(query: str, top_k: int = 20) -> list[dict]:
+    global _faiss_index
+    if not _chunks or _faiss_index is None:
+        return []
+
+    from llm import get_embed_model, unload_model
+    embed_model = get_embed_model()
+
+    try:
+        res = embed_model.create_embedding(query)
+        q_vec = np.array(res["data"][0]["embedding"], dtype="float32")
+    except Exception as e:
+        print(f"[RAG] Failed to embed query: {e}")
+        unload_model()
+        return []
+
+    # Normalize query vector
+    norm = np.linalg.norm(q_vec)
+    if norm > 0:
+        q_vec /= norm
+
+    # Unload embed model to free memory
+    unload_model()
+
+    q_vec = q_vec.reshape(1, -1)
+    faiss_scores, faiss_idx = _faiss_index.search(q_vec, min(top_k, len(_chunks)))
+
+    results = []
+    for score, idx in zip(faiss_scores[0], faiss_idx[0]):
+        if idx >= 0:
+            results.append({
+                "text": _chunks[idx],
+                "parent_text": _parent_chunks[idx],
+                "doc": _chunk_doc[idx],
+                "page": _chunk_page[idx],
+                "faiss_score": float(score),
+            })
+    return results
 
 
-# ── Hybrid Search (backward-compatible) ───────────────────
+# ── Backward Compatible Search ────────────────────────────
 def search(query: str, top_k: int = 5) -> str:
-    result = search_adaptive(query, top_k)
-    return result["context"]
+    chunks = search_chunks(query, top_k=top_k)
+    context = ""
+    for c in chunks:
+        context += f"[Document: {c['doc']}, page {c['page']}]\n{c['parent_text']}\n\n"
+    return context.strip()
 
 
-# ── Adaptive Search (new) ─────────────────────────────────
+# ── Adaptive Search (Dense Embeddings) ─────────────────────
 def search_adaptive(query: str, top_k: int = 5) -> dict:
-    """
-    Returns {
-        context:    str   — retrieved text
-        confidence: float — 0.0–1.0
-        sources:    list  — [{doc, page, score}, ...]
-        has_images: bool  — whether relevant images exist
-        suggestion: str   — hint when confidence is low
-    }
-    """
     empty = {"context": "", "confidence": 0.0, "sources": [],
              "has_images": False, "suggestion": ""}
 
     if not _chunks:
         return empty
 
-    tokens = _tokenize(query)
-    if not tokens:
+    chunks = search_chunks(query, top_k=top_k)
+    if not chunks:
         return empty
 
-    # BM25 scores
-    bm25_scores = np.array(_bm25.get_scores(tokens))
-
-    # FAISS scores
-    q_vec = _vectorize_query(tokens)
-    faiss_scores, faiss_idx = _faiss_index.search(
-        q_vec.reshape(1, -1), min(20, len(_chunks))
-    )
-
-    # Combine
-    combined = {}
-    for score, idx in zip(faiss_scores[0], faiss_idx[0]):
-        if idx >= 0:
-            combined[idx] = combined.get(idx, 0) + float(score) * 0.5
-    for i, s in enumerate(bm25_scores):
-        combined[i] = combined.get(i, 0) + float(s) * 0.5
-
-    ranked = sorted(combined.items(), key=lambda x: x[1], reverse=True)
-
-    # Dedup & select
-    selected, seen = [], set()
-    for idx, score in ranked:
-        key = _chunks[idx][:100]
-        if key in seen:
-            continue
-        selected.append((idx, score))
-        seen.add(key)
-        if len(selected) >= top_k:
-            break
-
-    if not selected:
-        return empty
-
-    # ── Confidence scoring ────────────────────────────────
-    top_score = selected[0][1]
-    # Normalize: BM25 scores vary widely; use relative scoring
-    bm25_max = float(bm25_scores.max()) if bm25_scores.max() > 0 else 1.0
-    norm_top = top_score / (bm25_max + 0.5)  # rough normalization
-
-    # Query coverage: how many query tokens appear in top results
-    top_text = " ".join(_chunks[idx] for idx, _ in selected[:3]).lower()
-    coverage = sum(1 for t in tokens if t in top_text) / max(len(tokens), 1)
-
-    # Score gap: is top result clearly better?
-    if len(selected) >= 2:
-        gap = (selected[0][1] - selected[1][1]) / max(selected[0][1], 0.01)
-    else:
-        gap = 1.0
-
-    confidence = min(1.0, (norm_top * 0.4 + coverage * 0.4 + gap * 0.2))
+    # ── Confidence scoring based on top FAISS similarity score ──
+    # Cosine similarity for normalized vectors is in range [-1, 1], usually [0.3, 0.8] for text
+    top_score = chunks[0]["faiss_score"]
+    confidence = max(0.0, min(1.0, (top_score - 0.2) / 0.6))
 
     # ── Build context ─────────────────────────────────────
     MAX_CHARS = 2500
@@ -549,21 +568,18 @@ def search_adaptive(query: str, top_k: int = 5) -> dict:
     sources = []
     has_images = False
 
-    for idx, score in selected:
-        part = f"[Document: {_chunk_doc[idx]}, page {_chunk_page[idx]}]\n{_chunks[idx]}\n\n"
+    for c in chunks:
+        part = f"[Document: {c['doc']}, page {c['page']}]\n{c['parent_text']}\n\n"
         if len(final) + len(part) > MAX_CHARS:
             break
         final += part
-        sources.append({"doc": _chunk_doc[idx], "page": _chunk_page[idx],
-                         "score": round(score, 4)})
-        if _chunk_type[idx] == "image_meta":
-            has_images = True
-
+        sources.append({"doc": c["doc"], "page": c["page"], "score": round(c["faiss_score"], 4)})
+        
     # Check if any document has images
-    if not has_images and _images:
+    if _images:
         has_images = True
 
-    # ── Suggestion for low confidence ─────────────────────
+    # Suggestion for low confidence
     suggestion = ""
     if confidence < 0.3 and final:
         doc_names = list(set(s["doc"] for s in sources))
@@ -596,11 +612,8 @@ def get_all_content(max_chars: int = 3500) -> str:
         return ""
     result = ""
     for i, chunk in enumerate(_chunks):
-        part = f"[Document: {_chunk_doc[i]}, page {_chunk_page[i]}]\n{chunk}\n\n"
+        part = f"[Document: {_chunk_doc[i]}, page {_chunk_page[i]}]\n{_parent_chunks[i]}\n\n"
         if len(result) + len(part) > max_chars:
-            remaining = max_chars - len(result)
-            if remaining > 50:
-                result += part[:remaining]
             break
         result += part
     return result.strip()

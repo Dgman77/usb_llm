@@ -37,6 +37,9 @@ async def lifespan(app: FastAPI):
     except FileNotFoundError as e:
         print(str(e))
         print("[Server] WARNING: No model loaded. /api/generate will fail.")
+    except Exception as e:
+        print(f"[Server] WARNING: Model loading error: {e}")
+        print("[Server] Server will start but model loading is deferred.")
     yield
     print("[Server] Stopped.")
 
@@ -115,9 +118,36 @@ async def api_remove(req: dict):
     return JSONResponse({"filename": filename, "removed": True})
 
 
+@app.get("/api/models")
+async def api_get_models():
+    from llm import find_available_models, get_model_name
+    return JSONResponse({
+        "models": find_available_models(),
+        "active": get_model_name()
+    })
+
+
+class SwitchRequest(BaseModel):
+    path: str
+
+
+@app.post("/api/models/switch")
+async def api_switch_model(req: SwitchRequest):
+    from llm import switch_model, get_model_name
+    if not os.path.exists(req.path):
+        raise HTTPException(404, f"Model file not found: {req.path}")
+    try:
+        switch_model(req.path)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to switch model: {e}")
+    return JSONResponse({"active": get_model_name(), "status": "success"})
+
+
 @app.get("/api/status")
 async def api_status():
-    return JSONResponse({"server": "ok", "rag": get_stats()})
+    from llm import get_model_name
+    return JSONResponse({"server": "ok", "active_model": get_model_name(), "rag": get_stats()})
+
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

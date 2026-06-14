@@ -216,7 +216,7 @@ call :reg  fitz                 "PyMuPDF>=1.23.0"
 call :reg  faiss                "faiss-cpu>=1.7.4"
 call :reg  numpy                "numpy>=1.24.0,<2.0.0"
 call :reg  pydantic             "pydantic>=2.0.0"
-call :reg  rank_bm25            "rank-bm25>=0.2.2"
+
 call :reg  docx                 "python-docx>=1.1.0"
 call :reg  openpyxl             "openpyxl>=3.1.0"
 call :reg  pptx                 "python-pptx>=0.6.21"
@@ -299,11 +299,11 @@ FOR /L %%I IN (0,1,%_LAST2%) DO (
 
 echo.
 IF %_FAIL% GTR 0 (
-    echo   [WARNING] %_FAIL% package(s) failed.
+    echo   [WARNING] %_FAIL% packages failed.
     echo             Re-run as Administrator or check internet connection.
     echo.
 ) ELSE (
-    echo   [OK] All %NEED_COUNT% package(s) installed successfully.
+    echo   [OK] All %NEED_COUNT% packages installed successfully.
     echo.
 )
 
@@ -461,7 +461,7 @@ IF ERRORLEVEL 1 ( echo   [FAIL] python-multipart  & SET /A V_FAIL+=1 ) ELSE ( ec
 IF ERRORLEVEL 1 ( echo   [FAIL] aiofiles          & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] aiofiles )
 
 "%PY%" -c "import fitz" >nul 2>&1
-IF ERRORLEVEL 1 ( echo   [FAIL] PyMuPDF (fitz)    & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] PyMuPDF (fitz) )
+IF ERRORLEVEL 1 ( echo   [FAIL] PyMuPDF fitz      & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] PyMuPDF fitz )
 
 "%PY%" -c "import faiss" >nul 2>&1
 IF ERRORLEVEL 1 ( echo   [FAIL] faiss-cpu         & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] faiss-cpu )
@@ -472,8 +472,7 @@ IF ERRORLEVEL 1 ( echo   [FAIL] numpy             & SET /A V_FAIL+=1 ) ELSE ( ec
 "%PY%" -c "import pydantic" >nul 2>&1
 IF ERRORLEVEL 1 ( echo   [FAIL] pydantic          & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] pydantic )
 
-"%PY%" -c "import rank_bm25" >nul 2>&1
-IF ERRORLEVEL 1 ( echo   [FAIL] rank-bm25         & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] rank-bm25 )
+
 
 "%PY%" -c "import docx" >nul 2>&1
 IF ERRORLEVEL 1 ( echo   [FAIL] python-docx       & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] python-docx )
@@ -483,14 +482,14 @@ IF ERRORLEVEL 1 ( echo   [FAIL] llama_cpp         & SET /A V_FAIL+=1 ) ELSE ( ec
 
 echo.
 IF %V_FAIL% GTR 0 (
-    echo   [WARNING] %V_FAIL% import(s) failed -- re-run setup or check errors above.
+    echo   [WARNING] %V_FAIL% imports failed -- re-run setup or check errors above.
 ) ELSE (
     echo   [OK] All imports verified successfully.
 )
 echo.
 
 :: ─────────────────────────────────────────────────────────────
-:: CREATE MODELS FOLDER
+:: CREATE MODELS FOLDER & DOWNLOAD MODELS
 :: ─────────────────────────────────────────────────────────────
 IF NOT EXIST "%ROOT%\models" (
     mkdir "%ROOT%\models"
@@ -498,7 +497,32 @@ IF NOT EXIST "%ROOT%\models" (
 ) ELSE (
     echo [SKIP] models\ folder already exists
 )
-echo.
+
+:: Download Embedding Model
+IF NOT EXIST "%ROOT%\models\nomic-embed-text-v1.5.Q8_0.gguf" (
+    echo Downloading embedding model: nomic-embed-text-v1.5.Q8_0.gguf 137MB ...
+    call :download "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf" "%ROOT%\models\nomic-embed-text-v1.5.Q8_0.gguf"
+    IF EXIST "%ROOT%\models\nomic-embed-text-v1.5.Q8_0.gguf" (
+        echo [OK] Embedding model downloaded.
+    ) ELSE (
+        echo [WARNING] Failed to download embedding model.
+    )
+) ELSE (
+    echo [SKIP] Embedding model already exists.
+)
+
+:: Download Reranker Model
+IF NOT EXIST "%ROOT%\models\bge-reranker-v2-m3-Q8_0.gguf" (
+    echo Downloading reranker model: bge-reranker-v2-m3-Q8_0.gguf 570MB ...
+    call :download "https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q8_0.gguf" "%ROOT%\models\bge-reranker-v2-m3-Q8_0.gguf"
+    IF EXIST "%ROOT%\models\bge-reranker-v2-m3-Q8_0.gguf" (
+        echo [OK] Reranker model downloaded.
+    ) ELSE (
+        echo [WARNING] Failed to download reranker model.
+    )
+) ELSE (
+    echo [SKIP] Reranker model already exists.
+)
 
 :: ─────────────────────────────────────────────────────────────
 :done

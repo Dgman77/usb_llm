@@ -101,8 +101,8 @@ REM Save for next run
 (echo !MODEL_PATH!) > "%ROOT%\models\model_path.txt"
 
 REM Pass to backend
-SET Flash AI with RAG _MODEL=!MODEL_PATH!
-SET Flash AI with RAG _ROOT=%ROOT%
+SET FLASH_AI_MODEL=!MODEL_PATH!
+SET FLASH_AI_ROOT=%ROOT%
 
 echo.
 
