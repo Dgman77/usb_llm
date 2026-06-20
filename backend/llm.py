@@ -130,13 +130,67 @@ def find_available_models() -> list[dict]:
     return available
 
 
-def switch_model(path: str):
+def switch_model(path: str) -> dict:
+    global CURRENT_STRATEGY
+    can_load, strategy, estimated_ram = check_ram_budget(path)
+    chat_size = get_gguf_size_gb(path)
+
+    if strategy == "too_large":
+        return {
+            "success": False,
+            "error": "Model too large for 8GB RAM.",
+            "model_size_gb": round(chat_size, 2),
+            "estimated_total_gb": round(estimated_ram, 2),
+            "recommendation": "Use a Q4 quantized model under 4GB for best performance."
+        }
+
+    # Save new path to file
     path_file = os.path.join(MODELS_DIR, "model_path.txt")
     os.makedirs(MODELS_DIR, exist_ok=True)
     with open(path_file, "w", encoding="utf-8") as f:
         f.write(path)
-    unload_model()
-    load_model()
+
+    CURRENT_STRATEGY = strategy
+
+    if strategy == "all_resident":
+        unload_chat_model()
+        gc.collect()
+        load_chat_model()
+        try:
+            get_embed_model()
+        except Exception:
+            pass
+        try:
+            get_reranker_model()
+        except Exception:
+            pass
+        print(f"Chat switched. All 3 models resident. RAM: {estimated_ram:.1f}GB")
+
+    elif strategy == "drop_reranker":
+        unload_chat_model()
+        unload_reranker()
+        gc.collect()
+        load_chat_model()
+        try:
+            get_embed_model()
+        except Exception:
+            pass
+        print(f"Chat switched. Reranker will hot-swap (model too large for 3 resident). RAM: {estimated_ram:.1f}GB")
+
+    elif strategy == "chat_only":
+        unload_chat_model()
+        unload_embed_model()
+        unload_reranker()
+        gc.collect()
+        load_chat_model()
+        print(f"Chat switched. Embed + reranker will hot-swap (large model loaded). RAM: {estimated_ram:.1f}GB")
+
+    return {
+        "success": True,
+        "active": get_model_name(),
+        "strategy": strategy,
+        "estimated_ram": round(estimated_ram, 2)
+    }
 
 
 def user_wants_doc_search(message: str) -> bool:
@@ -155,19 +209,115 @@ def user_wants_doc_search(message: str) -> bool:
     return any(kw in msg for kw in doc_keywords)
 
 
+# RAM-aware parameters
+MAX_RAM_GB = 7.5
+SYSTEM_OVERHEAD_GB = 2.35
+EMBED_SIZE_GB = 0.14
+RERANKER_SIZE_GB = 0.61
+LLM_CTX_WINDOW = 4096
+
+_chat_model = None
+_chat_model_path = None
+_embed_model = None
+_embed_model_path = None
+_reranker_model = None
+_reranker_model_path = None
+
+# Fallback alias for existing references
 _llm = None
 _llm_path = None
-_model_type = None  # "chat" or "embed"
+_model_type = None
+
+# Default strategy (updated on model switcher route)
+CURRENT_STRATEGY = "all_resident"
 
 
-def unload_model():
-    global _llm, _llm_path, _model_type
-    if _llm is not None:
-        print(f"[LLM] Unloading model: {_llm_path}")
+def get_gguf_size_gb(model_path):
+    """
+    Returns file size of GGUF model in GB.
+    Used to estimate RAM usage before loading.
+    """
+    if not os.path.exists(model_path):
+        return 0.0
+    size_bytes = os.path.getsize(model_path)
+    return size_bytes / (1024 ** 3)
+
+
+def check_ram_budget(chat_model_path,
+                      embed_resident=True,
+                      reranker_resident=True):
+    """
+    Returns (can_load, strategy, estimated_ram)
+
+    Strategy options:
+      "all_resident"     → all 3 models in RAM
+      "drop_reranker"    → unload reranker to fit
+      "drop_embed"       → unload embed to fit
+      "chat_only"        → only chat fits, swap
+                           embed/reranker per query
+      "too_large"        → model too big even alone
+    """
+    chat_size = get_gguf_size_gb(chat_model_path)
+    base = SYSTEM_OVERHEAD_GB + chat_size
+
+    if embed_resident:
+        base += EMBED_SIZE_GB
+    if reranker_resident:
+        base += RERANKER_SIZE_GB
+
+    if base <= MAX_RAM_GB:
+        return True, "all_resident", base
+
+    # try without reranker
+    base_no_reranker = (SYSTEM_OVERHEAD_GB +
+                        chat_size + EMBED_SIZE_GB)
+    if base_no_reranker <= MAX_RAM_GB:
+        return True, "drop_reranker", base_no_reranker
+
+    # try without embed + reranker
+    base_chat_only = SYSTEM_OVERHEAD_GB + chat_size
+    if base_chat_only <= MAX_RAM_GB:
+        return True, "chat_only", base_chat_only
+
+    return False, "too_large", base_chat_only
+
+
+def unload_chat_model():
+    global _chat_model, _chat_model_path, _llm, _llm_path, _model_type
+    if _chat_model is not None:
+        print(f"[LLM] Unloading chat model: {_chat_model_path}")
+        _chat_model = None
+        _chat_model_path = None
         _llm = None
         _llm_path = None
         _model_type = None
         gc.collect()
+
+
+def unload_embed_model():
+    global _embed_model, _embed_model_path
+    if _embed_model is not None:
+        print(f"[LLM] Unloading embed model: {_embed_model_path}")
+        _embed_model = None
+        _embed_model_path = None
+        gc.collect()
+
+
+def unload_reranker():
+    global _reranker_model, _reranker_model_path
+    if _reranker_model is not None:
+        print(f"[LLM] Unloading reranker: {_reranker_model_path}")
+        _reranker_model = None
+        _reranker_model_path = None
+        gc.collect()
+
+
+def unload_model():
+    # Deprecated/compatible wrapper for query pipeline
+    # Only unloads if the strategy requires hot-swapping
+    if CURRENT_STRATEGY == "chat_only":
+        unload_embed_model()
+        unload_reranker()
 
 
 def get_chat_model():
@@ -175,7 +325,7 @@ def get_chat_model():
 
 
 def get_embed_model():
-    global _llm, _llm_path, _model_type
+    global _embed_model, _embed_model_path
     embed_path = os.path.join(MODELS_DIR, "nomic-embed-text-v1.5.Q8_0.gguf")
     if not os.path.exists(embed_path):
         hits = glob.glob(os.path.join(MODELS_DIR, "*embed*.gguf"))
@@ -183,85 +333,75 @@ def get_embed_model():
             embed_path = hits[0]
     if not os.path.exists(embed_path):
         raise FileNotFoundError("Embedding model GGUF not found. Please run setup.bat.")
-    if _model_type == "embed" and _llm_path == embed_path:
-        return _llm
-    unload_model()
+
+    if _embed_model is not None and _embed_model_path == embed_path:
+        return _embed_model
+
+    # If chat_only strategy, we might need to free other models
+    if CURRENT_STRATEGY == "chat_only":
+        unload_reranker()
+
     print(f"[LLM] Loading embedding model: {os.path.basename(embed_path)}")
     try:
-        _llm = Llama(
+        _embed_model = Llama(
             model_path=embed_path,
             embedding=True,
             n_ctx=512,
             n_threads=max(2, (os.cpu_count() or 4) // 2),
             verbose=False,
         )
+        _embed_model_path = embed_path
     except Exception as e:
         print(f"[LLM] ERROR loading embedding model: {e}")
         raise
-    _llm_path = embed_path
-    _model_type = "embed"
-    return _llm
-
-
-# Dedicated reranker model (BGE reranker GGUF)
-_reranker = None
-_reranker_path = None
+    return _embed_model
 
 
 def get_reranker_model():
-    """Load the dedicated BGE reranker model for cross-encoding.
-    Falls back to None if not available (caller should use FAISS scores)."""
-    global _reranker, _reranker_path
+    global _reranker_model, _reranker_model_path
     reranker_path = None
     hits = glob.glob(os.path.join(MODELS_DIR, "*rerank*.gguf"))
     if hits:
         reranker_path = hits[0]
     if reranker_path is None or not os.path.exists(reranker_path):
         return None
-    if _reranker is not None and _reranker_path == reranker_path:
-        return _reranker
-    # Unload any existing reranker
-    unload_reranker()
+
+    if _reranker_model is not None and _reranker_model_path == reranker_path:
+        return _reranker_model
+
+    # If needed, unload models for memory room
+    if CURRENT_STRATEGY in ("drop_reranker", "chat_only"):
+        unload_embed_model()
+
     print(f"[LLM] Loading reranker model: {os.path.basename(reranker_path)}")
     try:
-        _reranker = Llama(
+        _reranker_model = Llama(
             model_path=reranker_path,
             embedding=True,
             n_ctx=512,
             n_threads=max(2, (os.cpu_count() or 4) // 2),
             verbose=False,
         )
-        _reranker_path = reranker_path
+        _reranker_model_path = reranker_path
     except Exception as e:
         print(f"[LLM] Reranker load failed: {e} — will use FAISS scores")
-        _reranker = None
-        _reranker_path = None
-    return _reranker
+        _reranker_model = None
+        _reranker_model_path = None
+    return _reranker_model
 
 
-def unload_reranker():
-    global _reranker, _reranker_path
-    if _reranker is not None:
-        print(f"[LLM] Unloading reranker: {_reranker_path}")
-        _reranker = None
-        _reranker_path = None
-        gc.collect()
-
-
-def load_model():
-    global _llm, _llm_path, _model_type
+def load_chat_model():
+    global _chat_model, _chat_model_path, _llm, _llm_path, _model_type
     current = find_model()
-    if _model_type == "chat" and _llm_path == current:
-        return _llm
-    unload_model()
-    # Also unload reranker before loading chat model on 8GB systems
-    unload_reranker()
+    if _chat_model is not None and _chat_model_path == current:
+        return _chat_model
+
+    unload_chat_model()
     print(f"[LLM] Loading chat model: {os.path.basename(current)}")
-    # Use smaller context (2048) to save ~1GB RAM on 8GB systems
-    n_ctx = 2048
+    n_ctx = LLM_CTX_WINDOW
     n_threads = max(2, (os.cpu_count() or 4) // 2)
     try:
-        _llm = Llama(
+        _chat_model = Llama(
             model_path=current,
             n_ctx=n_ctx,
             n_threads=n_threads,
@@ -270,17 +410,58 @@ def load_model():
             use_mlock=False,
             verbose=False,
         )
+        _chat_model_path = current
+        _llm = _chat_model
+        _llm_path = current
+        _model_type = "chat"
     except Exception as e:
         print(f"[LLM] ERROR loading chat model: {e}")
+        _chat_model = None
+        _chat_model_path = None
         _llm = None
         _llm_path = None
         _model_type = None
         raise
-    _llm_path = current
-    _model_type = "chat"
     print(f"[LLM] Ready — {os.path.basename(current)} (ctx={n_ctx}, threads={n_threads})")
     print(f"[LLM] Chat format: {_detect_chat_format(current)}")
-    return _llm
+    return _chat_model
+
+
+def load_model():
+    return load_chat_model()
+
+
+def load_all_models():
+    """Server start -> load ALL 3 models -> ALL stay in RAM"""
+    print("[LLM] Initializing resident models...")
+    chat_path = find_model()
+    chat_size = get_gguf_size_gb(chat_path)
+
+    # Validate RAM budget
+    can_load, strategy, estimated_ram = check_ram_budget(chat_path)
+    global CURRENT_STRATEGY
+    CURRENT_STRATEGY = strategy
+
+    # Log exact sizes as per requirements
+    print(f"Loading chat model... {chat_size:.2f}GB")
+    load_chat_model()
+
+    if strategy in ("all_resident", "drop_reranker"):
+        print("Loading embed model... 0.14GB")
+        try:
+            load_embed_model()
+        except Exception as e:
+            print(f"[LLM] WARNING: Failed to load embed model: {e}")
+
+    if strategy == "all_resident":
+        print("Loading reranker... 0.61GB")
+        try:
+            load_reranker_model()
+        except Exception as e:
+            print(f"[LLM] WARNING: Failed to load reranker model: {e}")
+
+    print(f"Total model RAM: {estimated_ram:.2f}GB — OK")
+    print(f"All models loaded. RAM usage: ~{estimated_ram:.1f}GB")
 
 
 # ── Chat format detection ──────────────────────────────────────────────────────
@@ -557,6 +738,21 @@ mindmap
 Now generate a DETAILED mindmap with SPECIFIC content for:""",
 }
 
+RAG_SYSTEM_PROMPT = """You are a strict document assistant. Answer ONLY using the context provided.
+
+RULES:
+1. If context contains the answer — answer clearly and cite the source.
+2. If context does NOT contain the answer — say exactly: "This information is not available in the uploaded document."
+3. NEVER use training knowledge to fill gaps.
+4. NEVER guess or infer anything not explicitly present in the provided context.
+5. NEVER say "based on general knowledge" or any similar phrase.
+6. If only partial info available — share what IS in the document and clearly state what is missing.
+"""
+
+GENERAL_SYSTEM_PROMPT = """You are a helpful AI assistant. Answer the user's question clearly and accurately using your knowledge.
+"""
+
+
 GENERAL_SYSTEM = """You are a helpful AI assistant.
 
 STRUCTURE YOUR RESPONSE FOR MAXIMUM READABILITY:
@@ -811,7 +1007,7 @@ def generate(
         full_prompt = _build_prompt(diagram_sys, user_msg, prefix)
 
         temp = 0.2
-        max_tokens = 2048
+        max_tokens = LLM_CTX_WINDOW
 
         def _generate_once(t):
             r = llm(full_prompt, max_tokens=max_tokens, temperature=t, stop=stops, echo=False)
@@ -846,7 +1042,7 @@ def generate(
 
     # ── Document Q&A (Strict or Adaptive) ──────────────────────────────────
     if mode == "doc_qa" or (mode == "qa" and context):
-        system_prompt = ADAPTIVE_DOC_SYSTEM if confidence > 0.6 else DOC_SYSTEM
+        system_prompt = RAG_SYSTEM_PROMPT
         stops = _stop_tokens()
         
         user_msg = (
@@ -865,7 +1061,7 @@ def generate(
 
     # ── General Q&A ───────────────────────────────────────────────────────────
     stops = _stop_tokens()
-    full_prompt = _build_prompt(GENERAL_SYSTEM, prompt)
+    full_prompt = _build_prompt(GENERAL_SYSTEM_PROMPT, prompt)
     result = llm(
         full_prompt,
         max_tokens=512,
@@ -887,51 +1083,6 @@ def generate_hyde_passage(query: str) -> str:
     return res["choices"][0]["text"].strip()
 
 
-def score_chunk_relevance(query: str, chunk_text: str) -> float:
-    """Evaluate chunk relevance to query, return a score between 0.0 and 1.0."""
-    llm = load_model()
-    stops = _stop_tokens()
-    system = (
-        "You are an expert evaluator. Rate the relevance of the text chunk to the query on a scale from 0.0 to 1.0.\n"
-        "0.0 means completely irrelevant.\n"
-        "1.0 means the chunk contains the exact, direct answer to the query.\n"
-        "Output ONLY the numeric score (e.g. 0.85). Do not include any explanation."
-    )
-    user = f"Query: {query}\n\nChunk: {chunk_text}\n\nRelevance Score (0.0 to 1.0):"
-    prompt = _build_prompt(system, user)
-    res = llm(prompt, max_tokens=10, temperature=0.0, stop=stops, echo=False)
-    output = res["choices"][0]["text"].strip()
-    try:
-        match = re.search(r"[-+]?\d*\.\d+|\d+", output)
-        if match:
-            score = float(match.group())
-            return max(0.0, min(1.0, score))
-    except Exception:
-        pass
-    return 0.5
-
-
-def evaluate_sufficiency(query: str, context: str) -> float:
-    """Evaluate if context contains enough information to answer the query, return a score from 0.0 to 1.0."""
-    llm = load_model()
-    stops = _stop_tokens()
-    system = (
-        "You are a strict QA auditor. Assess whether the provided context contains sufficient information to fully answer the query.\n"
-        "Score from 0.0 to 1.0:\n"
-        "0.0 means the context has no relevant information at all.\n"
-        "1.0 means the context contains complete and sufficient information to answer the query.\n"
-        "Output ONLY the numeric score (e.g. 0.9). Do not include any explanation."
-    )
-    user = f"Query: {query}\n\nContext:\n{context}\n\nSufficiency Score (0.0 to 1.0):"
-    prompt = _build_prompt(system, user)
-    res = llm(prompt, max_tokens=10, temperature=0.0, stop=stops, echo=False)
-    output = res["choices"][0]["text"].strip()
-    try:
-        match = re.search(r"[-+]?\d*\.\d+|\d+", output)
-        if match:
-            score = float(match.group())
-            return max(0.0, min(1.0, score))
-    except Exception:
-        pass
-    return 0.5
+# LLM-based chunk scoring removed — too slow for
+# 8GB RAM. CRAG heuristic in crag.py handles this.
 

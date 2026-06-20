@@ -560,9 +560,10 @@
       <span id="status-text">Loading model...</span>
     </div>
     <div id="model-selector-container" style="display:none; flex-direction:column; gap:6px;">
-      <span class="section-label" style="font-size:10px; margin-bottom:0;">Active Model</span>
+      <span class="section-label" style="font-size:10px; margin-bottom:0;">Chat Model</span>
       <select id="model-select" onchange="switchModel(this.value)" style="width:100%; padding:8px 10px; border-radius:8px; background:var(--surface); color:var(--text); border:1px solid var(--border); font-family:'DM Mono', monospace; font-size:11px; outline:none; cursor:pointer;">
       </select>
+      <div id="strategy-badge" style="font-size:10px; margin-top:4px; font-family:'DM Mono', monospace; font-weight:600;"></div>
     </div>
   </div>
 </aside>
@@ -688,6 +689,23 @@
     }
   }
 
+  function updateStrategyBadge(strategy) {
+    const badge = document.getElementById('strategy-badge');
+    if (!badge) return;
+    if (strategy === 'all_resident') {
+      badge.style.color = 'var(--teal)';
+      badge.textContent = '✓ All models resident';
+    } else if (strategy === 'drop_reranker') {
+      badge.style.color = 'var(--accent)';
+      badge.textContent = '⚠ Large model — reranker disabled';
+    } else if (strategy === 'chat_only') {
+      badge.style.color = 'var(--rose)';
+      badge.textContent = '⚠ Large model — slower query speed';
+    } else {
+      badge.textContent = '';
+    }
+  }
+
   async function switchModel(path) {
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('status-text');
@@ -705,8 +723,10 @@
         statusText.textContent = 'Model ready';
         showToast(`Switched to ${data.active}`);
         loadModels();
+        updateStrategyBadge(data.strategy);
       } else {
-        showToast("Failed to switch model");
+        const data = await r.json();
+        showToast(data.error || "Failed to switch model");
         checkStatus();
       }
     } catch {
@@ -723,6 +743,9 @@
         document.getElementById('status-dot').className = 'ready';
         document.getElementById('status-text').textContent = 'Model ready';
         loadModels();
+        if (data.strategy) {
+          updateStrategyBadge(data.strategy);
+        }
       }
     } catch {
       document.getElementById('status-dot').className = 'loading';
@@ -830,6 +853,11 @@
         cragBadge.className += ' mode-qa'; // reuse teal styling
         cragBadge.textContent = `CRAG Verified (${data.crag_score})`;
         cragBadge.title = data.crag_reason;
+      } else if (data.crag_status === 'out_of_domain') {
+        cragBadge.style.background = 'var(--red-light)';
+        cragBadge.style.color = 'var(--red)';
+        cragBadge.textContent = '🔍 Not found in document';
+        cragBadge.title = data.crag_reason || '';
       } else {
         cragBadge.style.background = 'var(--red-light)';
         cragBadge.style.color = 'var(--red)';
@@ -896,7 +924,7 @@
       bubble.innerHTML = formatResponse(response);
       wrapper.appendChild(bubble);
 
-      if (data.sources && data.sources.length > 0) {
+      if (data.crag_status !== 'out_of_domain' && data.sources && data.sources.length > 0) {
         const sourceList = document.createElement('div');
         sourceList.style.cssText = 'font-size:11px; color:var(--muted); margin-top:8px; font-family:var(--mono);';
         const docs = [...new Set(data.sources.map(s => s.doc))];

@@ -11,6 +11,10 @@ the full chat model (~2-4GB), avoiding catastrophic memory swaps on 8GB systems.
 
 import numpy as np
 
+RERANKER_CHUNK_MAX_CHARS = 1500
+# Increase for better rerank accuracy.
+# Decrease if reranker is too slow on large docs.
+
 
 def rerank(query: str, chunks: list[dict], top_k: int = 5) -> list[dict]:
     """
@@ -66,10 +70,13 @@ def _rerank_with_model(reranker, query: str, chunks: list[dict], top_k: int) -> 
         print(f"[Reranker] Failed to embed query: {e}")
         return _fallback_rerank(chunks, top_k)
     
+    # LIMITATION: llama.cpp does not expose cross-encoder
+    # logits natively. This is the closest approximation
+    # possible with current llama-cpp-python API.
     for chunk in chunks:
         text = chunk.get("parent_text") or chunk.get("text", "")
         # Truncate very long chunks for the reranker
-        text = text[:500]
+        text = text[:RERANKER_CHUNK_MAX_CHARS]
         try:
             c_res = reranker.create_embedding(text)
             c_vec = np.array(c_res["data"][0]["embedding"], dtype="float32")

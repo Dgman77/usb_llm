@@ -20,6 +20,7 @@ Reference: Yan et al., "Corrective Retrieval Augmented Generation" (2024)
 """
 
 import re
+import numpy as np
 
 
 # ── Thresholds ────────────────────────────────────────────────
@@ -28,15 +29,49 @@ COVERAGE_THRESHOLD = 0.20     # Minimum query term coverage in chunks
 DENSITY_THRESHOLD = 100       # Minimum character count in context
 COMBINED_THRESHOLD = 0.35     # Minimum combined score to pass
 
+TOPIC_RELEVANCE_THRESHOLD = 0.35
+# Tune lower (0.25) for strict matching
+# Tune higher (0.45) for loose topic matching
 
-def evaluate(query: str, chunks: list[dict]) -> dict:
+
+def check_topic_relevance(query_embedding, chunk_embeddings):
+    """
+    Semantic gate: checks if ANY retrieved chunk
+    is actually about the query topic.
+    Returns (is_relevant: bool, best_score: float)
+
+    Runs BEFORE CRAG heuristic scoring.
+    If False → skip CRAG, return no-answer.
+
+    Vectors must be L2 normalised already.
+    Uses dot product = cosine similarity.
+    """
+    if not chunk_embeddings:
+        return False, 0.0
+
+    similarities = []
+    for ce in chunk_embeddings:
+        score = float(np.dot(query_embedding, ce))
+        similarities.append(score)
+
+    best_score = max(similarities)
+
+    if best_score < TOPIC_RELEVANCE_THRESHOLD:
+        return False, best_score
+
+    return True, best_score
+
+
+def evaluate(query: str, query_embedding, chunks: list[dict], chunk_embeddings: list) -> dict:
     """
     Evaluate if retrieved chunks are relevant and sufficient to answer the query.
     Uses lightweight heuristic signals — NO LLM calls (saves memory on 8GB systems).
     
     Args:
         query:  The user's original question
+        query_embedding: The query vector embedding
         chunks: List of reranked chunk dicts with 'text', 'parent_text', 'rerank_score'
+        chunk_embeddings: Embeddings parallel to chunks
         
     Returns:
         {
@@ -46,6 +81,16 @@ def evaluate(query: str, chunks: list[dict]) -> dict:
             "context": str,         # Assembled context string (if pass)
         }
     """
+    # Step 1: Semantic relevance topic check (FIX-6)
+    is_rel, best_score = check_topic_relevance(query_embedding, chunk_embeddings)
+    if not is_rel:
+        return {
+            "pass": False,
+            "reason": "out_of_domain",
+            "best_similarity": best_score,
+            "crag_score": 0.0
+        }
+
     if not chunks:
         return {
             "pass": False,

@@ -25,14 +25,32 @@ from orchestrator import handle_request
 USB_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(USB_ROOT, "frontend")
 
+UPLOADS_DIR = os.path.join(USB_ROOT, "data", "uploads")
+IMAGES_DIR = os.path.join(USB_ROOT, "data", "images")
+EXPORTS_DIR = os.path.join(USB_ROOT, "data", "exports")
+
 
 # ── Startup: load model before first request ───────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print(f"[Server] USB root : {USB_ROOT}")
     print(f"[Server] Frontend : {FRONTEND_DIR}")
+    
+    # FIX-13: Create storage folders on startup
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+    os.makedirs(EXPORTS_DIR, exist_ok=True)
+    print("Storage ready: data/uploads | data/images | data/exports")
+    
     try:
-        load_model()
+        # FIX-1: Load all 3 resident models
+        from llm import load_all_models
+        load_all_models()
+        
+        # FIX-4: Load persisted FAISS index
+        from rag import load_persisted_index
+        load_persisted_index()
+        
         print("[Server] Ready — http://localhost:8787")
     except FileNotFoundError as e:
         print(str(e))
@@ -41,6 +59,14 @@ async def lifespan(app: FastAPI):
         print(f"[Server] WARNING: Model loading error: {e}")
         print("[Server] Server will start but model loading is deferred.")
     yield
+    print("[Server] Stopping...")
+    try:
+        from llm import unload_chat_model, unload_embed_model, unload_reranker
+        unload_chat_model()
+        unload_embed_model()
+        unload_reranker()
+    except Exception as e:
+        print(f"[Server] Error during shutdown unloads: {e}")
     print("[Server] Stopped.")
 
 
@@ -48,7 +74,10 @@ app = FastAPI(title="Flash AI with RAG ", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8787",
+        "http://127.0.0.1:8787"
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -71,19 +100,31 @@ class GenerateRequest(BaseModel):
     message: str
 
 
+import asyncio
+_generate_lock = asyncio.Semaphore(1)
+
+
 @app.post("/api/generate")
 async def api_generate(req: GenerateRequest):
     if not req.message.strip():
         raise HTTPException(400, "Message cannot be empty")
 
-    try:
-        result = handle_request(req.message)
-    except FileNotFoundError as e:
-        raise HTTPException(503, str(e))
-    except Exception as e:
-        raise HTTPException(500, f"Generation failed: {e}")
-
-    return JSONResponse(result)
+    if not _generate_lock.locked():
+        async with _generate_lock:
+            try:
+                result = handle_request(req.message)
+            except FileNotFoundError as e:
+                raise HTTPException(503, str(e))
+            except Exception as e:
+                raise HTTPException(500, f"Generation failed: {e}")
+            return JSONResponse(result)
+    else:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": "Generation in progress. Please wait."
+            }
+        )
 
 
 @app.post("/api/upload")
@@ -100,8 +141,21 @@ async def api_upload(file: UploadFile = File(...)):
     contents = await file.read()
     if len(contents) > 100 * 1024 * 1024:  # Increased to 100MB for larger docs/images
         raise HTTPException(400, "File too large (max 100MB)")
+        
+    ext = os.path.splitext(file.filename.lower())[1]
+    is_image = ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".webp")
+    
     try:
-        n = add_document(contents, file.filename)
+        if is_image:
+            dest_path = os.path.join(IMAGES_DIR, file.filename)
+            with open(dest_path, "wb") as f:
+                f.write(contents)
+            n = 0
+        else:
+            dest_path = os.path.join(UPLOADS_DIR, file.filename)
+            with open(dest_path, "wb") as f:
+                f.write(contents)
+            n = add_document(contents, file.filename)
     except Exception as e:
         raise HTTPException(500, f"Failed to process file: {e}")
     return JSONResponse({"filename": file.filename, "chunks_added": n})
@@ -121,8 +175,16 @@ async def api_remove(req: dict):
 @app.get("/api/models")
 async def api_get_models():
     from llm import find_available_models, get_model_name
+    models = find_available_models()
+    # Filter out embed and reranker models (FIX-14)
+    filtered = []
+    for m in models:
+        name_lower = m["name"].lower()
+        if any(term in name_lower for term in ("embed", "rerank", "bge-reranker", "nomic")):
+            continue
+        filtered.append(m)
     return JSONResponse({
-        "models": find_available_models(),
+        "models": filtered,
         "active": get_model_name()
     })
 
@@ -133,20 +195,27 @@ class SwitchRequest(BaseModel):
 
 @app.post("/api/models/switch")
 async def api_switch_model(req: SwitchRequest):
-    from llm import switch_model, get_model_name
+    from llm import switch_model
     if not os.path.exists(req.path):
         raise HTTPException(404, f"Model file not found: {req.path}")
     try:
-        switch_model(req.path)
+        res = switch_model(req.path)
+        if not res.get("success", False):
+            return JSONResponse(status_code=400, content=res)
+        return JSONResponse(res)
     except Exception as e:
         raise HTTPException(500, f"Failed to switch model: {e}")
-    return JSONResponse({"active": get_model_name(), "status": "success"})
 
 
 @app.get("/api/status")
 async def api_status():
-    from llm import get_model_name
-    return JSONResponse({"server": "ok", "active_model": get_model_name(), "rag": get_stats()})
+    from llm import get_model_name, CURRENT_STRATEGY
+    return JSONResponse({
+        "server": "ok",
+        "active_model": get_model_name(),
+        "strategy": CURRENT_STRATEGY,
+        "rag": get_stats()
+    })
 
 
 

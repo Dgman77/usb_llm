@@ -1,7 +1,10 @@
 """
-rag.py — Adaptive Hybrid RAG (BM25 + FAISS) with multi-format + image support
+rag.py — Dense RAG with multi-format + image support
 Supports: PDF, DOCX, TXT, CSV, XLSX, PPTX, HTML, MD, JSON, XML, RTF, Images
-Session-only storage — all data lives in RAM, cleared on server restart
+
+# Search: Dense vector search via FAISS IndexFlatIP
+# with cosine similarity (L2 normalisation).
+# BM25 sparse search not implemented — dense only.
 """
 
 import os
@@ -359,6 +362,55 @@ def get_supported_formats() -> list[str]:
     return fmts
 
 
+# USB-safe root path for persistence
+USB_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def save_persisted_index():
+    try:
+        index_path = os.path.join(USB_ROOT, "index.faiss")
+        meta_path = os.path.join(USB_ROOT, "chunks_meta.json")
+        if _faiss_index is not None:
+            faiss.write_index(_faiss_index, index_path)
+            metadata = {
+                "chunks": _chunks,
+                "parent_chunks": _parent_chunks,
+                "chunk_doc": _chunk_doc,
+                "chunk_page": _chunk_page,
+                "chunk_type": _chunk_type,
+                "doc_names": _doc_names
+            }
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+            print("[RAG] FAISS index and metadata saved to disk.")
+    except Exception as e:
+        print(f"[RAG] WARNING: Failed to persist index: {e}")
+
+
+def load_persisted_index():
+    global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names, _embeddings, _faiss_index
+    index_path = os.path.join(USB_ROOT, "index.faiss")
+    meta_path = os.path.join(USB_ROOT, "chunks_meta.json")
+    if os.path.exists(index_path) and os.path.exists(meta_path):
+        try:
+            print("[RAG] Loading persisted FAISS index and metadata...")
+            _faiss_index = faiss.read_index(index_path)
+            with open(meta_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+            _chunks = metadata["chunks"]
+            _parent_chunks = metadata["parent_chunks"]
+            _chunk_doc = metadata["chunk_doc"]
+            _chunk_page = metadata["chunk_page"]
+            _chunk_type = metadata["chunk_type"]
+            _doc_names = metadata["doc_names"]
+            # Reconstruct embeddings from FAISS
+            _embeddings = [_faiss_index.reconstruct(i).tolist() for i in range(_faiss_index.ntotal)]
+            print(f"[RAG] Loaded {len(_chunks)} chunks from disk.")
+        except Exception as e:
+            print(f"[RAG] WARNING: Persisted index files corrupted or invalid: {e}. Starting fresh.")
+            clear_all()
+
+
 # ── Add Document ──────────────────────────────────────────
 def add_document(file_bytes: bytes, filename: str) -> int:
     global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names, _embeddings, _faiss_index
@@ -387,7 +439,6 @@ def add_document(file_bytes: bytes, filename: str) -> int:
     new_docs = []
     new_pages = []
     new_types = []
-    new_vectors = []
 
     # 1. Chunk text by tokens
     for page_num, text in pages:
@@ -409,7 +460,6 @@ def add_document(file_bytes: bytes, filename: str) -> int:
                 new_docs.append(filename)
                 new_pages.append(page_num)
                 new_types.append("text")
-                count += 1
 
     # Store image metadata
     if images:
@@ -421,33 +471,32 @@ def add_document(file_bytes: bytes, filename: str) -> int:
             new_docs.append(filename)
             new_pages.append(img_info.get("page", 1))
             new_types.append("image_meta")
-            count += 1
 
-    # 2. Embed all small chunks
-    for chunk in new_chunks:
+    # 2. Embed all small chunks, skipping failed ones (FIX-5)
+    for i in range(len(new_chunks)):
+        chunk = new_chunks[i]
         try:
             res = embed_model.create_embedding(chunk)
             vector = res["data"][0]["embedding"]
-            new_vectors.append(vector)
+            
+            # Append only if embedding succeeds
+            _chunks.append(chunk)
+            _parent_chunks.append(new_parents[i])
+            _chunk_doc.append(new_docs[i])
+            _chunk_page.append(new_pages[i])
+            _chunk_type.append(new_types[i])
+            _embeddings.append(vector)
+            count += 1
         except Exception as e:
-            print(f"[RAG] Embedding failed for chunk: {e}")
-            # Fallback to random/zero vector if embedding fails
-            dim = 768  # default for nomic
-            if _embeddings:
-                dim = len(_embeddings[0])
-            new_vectors.append([0.0] * dim)
+            print(f"WARNING: Skipping chunk {i} — embed failed: {chunk[:50]}")
 
-    # 3. Add to state
-    _chunks.extend(new_chunks)
-    _parent_chunks.extend(new_parents)
-    _chunk_doc.extend(new_docs)
-    _chunk_page.extend(new_pages)
-    _chunk_type.extend(new_types)
-    _embeddings.extend(new_vectors)
     _doc_names.append(filename)
 
     # Rebuild FAISS index
     _rebuild()
+    
+    # Save index & metadata to disk (FIX-4)
+    save_persisted_index()
 
     # Unload embed model to free memory
     unload_model()
@@ -475,6 +524,9 @@ def remove_document(filename: str) -> bool:
     _images.pop(filename, None)
 
     _rebuild()
+    
+    # Save index after removal (FIX-4)
+    save_persisted_index()
     return True
 
 
@@ -490,6 +542,20 @@ def clear_all():
     _doc_names.clear()
     _images.clear()
     _faiss_index = None
+    
+    # Remove persisted files
+    index_path = os.path.join(USB_ROOT, "index.faiss")
+    meta_path = os.path.join(USB_ROOT, "chunks_meta.json")
+    if os.path.exists(index_path):
+        try:
+            os.remove(index_path)
+        except Exception:
+            pass
+    if os.path.exists(meta_path):
+        try:
+            os.remove(meta_path)
+        except Exception:
+            pass
     
     from llm import unload_model
     unload_model()

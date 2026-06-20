@@ -59,12 +59,55 @@ def handle_request(user_message: str):
     if not has_documents():
         return {"mode": "qa", "response": generate(prompt=user_message, mode="qa")}
 
+    # FIX-2: General Query Routing Precheck
+    # 1. Use already-resident embed model (no load needed)
+    from llm import get_embed_model
+    embed_model = get_embed_model()
+    
+    # 2. Embed raw query (no HyDE)
+    try:
+        q_res = embed_model.create_embedding(user_message)
+        query_embedding = q_res["data"][0]["embedding"]
+    except Exception as e:
+        print(f"[Orchestrator] Precheck embedding failed: {e}")
+        query_embedding = None
+
+    if query_embedding is not None:
+        # 3. FAISS search top-3 only
+        precheck_chunks = search_chunks(user_message, top_k=3)
+        
+        # 4. Run CRAG heuristic on those 3 chunks
+        for c in precheck_chunks:
+            c["rerank_score"] = c.get("faiss_score", 0.0)
+            
+        from rag import _chunks, _embeddings
+        precheck_embeddings = []
+        for c in precheck_chunks:
+            try:
+                idx = _chunks.index(c["text"])
+                precheck_embeddings.append(_embeddings[idx])
+            except ValueError:
+                try:
+                    res = embed_model.create_embedding(c["text"])
+                    precheck_embeddings.append(res["data"][0]["embedding"])
+                except Exception:
+                    precheck_embeddings.append([0.0] * len(query_embedding))
+                    
+        precheck_eval = evaluate(user_message, query_embedding, precheck_chunks, precheck_embeddings)
+        
+        # 5. If CRAG score < 0.15 → route to general LLM directly (skip HyDE, full RAG)
+        if precheck_eval["score"] < 0.15:
+            print(f"[Orchestrator] Precheck failed (score {precheck_eval['score']} < 0.15). Routing to general LLM.")
+            return {"mode": "qa", "response": generate(prompt=user_message, mode="qa")}
+        else:
+            print(f"[Orchestrator] Precheck passed (score {precheck_eval['score']} >= 0.15). Proceeding with full RAG.")
+
     # 1. HyDE Query Rewriting (uses chat model)
     print(f"[Orchestrator] Rewriting query using HyDE...")
     hyde_query = rewrite_query(user_message)
     print(f"[Orchestrator] HyDE Query: {hyde_query[:100]}...")
 
-    # Unload chat model before FAISS search to free memory
+    # Unload chat model before FAISS search to free memory (if chat_only strategy)
     unload_model()
 
     # 2. FAISS Retrieval (top 10 — reduced from 20 to save memory)
@@ -75,9 +118,42 @@ def handle_request(user_message: str):
     print(f"[Orchestrator] Reranking chunks...")
     reranked_chunks = rerank(user_message, chunks, top_k=5)
 
+    # If query embedding was not generated, generate it now
+    if query_embedding is None:
+        try:
+            q_res = embed_model.create_embedding(user_message)
+            query_embedding = q_res["data"][0]["embedding"]
+        except Exception:
+            query_embedding = [0.0] * 768
+
     # 4. CRAG Evaluation
     print(f"[Orchestrator] Evaluating chunks with CRAG...")
-    eval_res = evaluate(user_message, reranked_chunks)
+    from rag import _chunks, _embeddings
+    reranked_embeddings = []
+    for c in reranked_chunks:
+        try:
+            idx = _chunks.index(c["text"])
+            reranked_embeddings.append(_embeddings[idx])
+        except ValueError:
+            try:
+                res = embed_model.create_embedding(c["text"])
+                reranked_embeddings.append(res["data"][0]["embedding"])
+            except Exception:
+                reranked_embeddings.append([0.0] * len(query_embedding))
+
+    eval_res = evaluate(user_message, query_embedding, reranked_chunks, reranked_embeddings)
+
+    # If blocked as out of domain (FIX-6 Part C), return immediately
+    if eval_res.get("reason") == "out_of_domain":
+        print(f"[Orchestrator] CRAG blocked query as out_of_domain.")
+        return {
+            "mode": "qa",
+            "response": "This information is not available in the uploaded document.",
+            "sources": [],
+            "crag_score": eval_res["score"],
+            "crag_status": "out_of_domain",
+            "crag_reason": eval_res["reason"]
+        }
 
     sources = []
     for c in reranked_chunks:
@@ -98,13 +174,13 @@ def handle_request(user_message: str):
         )
         
         # Check if the generated answer is a refusal
-        # (the model might say "The document does not contain sufficient information...")
         refusal_keywords = [
             "does not contain sufficient information",
             "do not contain specific information",
             "insufficient information",
             "no information",
-            "not mentioned in the context"
+            "not mentioned in the context",
+            "this information is not available in the uploaded document"
         ]
         is_refusal = any(kw in response.lower() for kw in refusal_keywords)
         
@@ -118,7 +194,7 @@ def handle_request(user_message: str):
         }
     else:
         print(f"[Orchestrator] CRAG failed. Returning refusal.")
-        refusal = "The document does not contain sufficient information to answer this."
+        refusal = "This information is not available in the uploaded document."
         return {
             "mode": "qa",
             "response": refusal,
