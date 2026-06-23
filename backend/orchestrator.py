@@ -53,6 +53,7 @@ def handle_request(user_message: str):
                 diagram_type=diagram_type,
                 context=context,
             ),
+            "layout_engine": diagram_type,
         }
 
     # ── QA FLOW (ADVANCED CRAG) ──────────────────────────
@@ -209,7 +210,7 @@ def handle_request(user_message: str):
 _DIAGRAM_NOISE = {
     "draw", "generate", "create", "make", "show", "build", "visualize",
     "visualise", "diagram", "chart", "flowchart", "flow", "graph",
-    "sketch", "map", "layout", "mermaid", "a", "an", "the", "for",
+    "sketch", "map", "layout", "graphviz", "a", "an", "the", "for",
     "of", "from", "my", "me", "please", "can", "you", "it", "this",
     "that", "about", "on", "to", "and", "with", "in", "document",
     "file", "upload", "uploaded", "pdf", "docx", "txt", "based",

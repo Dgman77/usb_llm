@@ -28,6 +28,8 @@ FRONTEND_DIR = os.path.join(USB_ROOT, "frontend")
 UPLOADS_DIR = os.path.join(USB_ROOT, "data", "uploads")
 IMAGES_DIR = os.path.join(USB_ROOT, "data", "images")
 EXPORTS_DIR = os.path.join(USB_ROOT, "data", "exports")
+DIAGRAMS_DIR = os.path.join(USB_ROOT, "data", "diagrams")
+JS_DIR = os.path.join(USB_ROOT, "js")
 
 
 # ── Startup: load model before first request ───────────────────────────────────
@@ -40,7 +42,8 @@ async def lifespan(app: FastAPI):
     os.makedirs(UPLOADS_DIR, exist_ok=True)
     os.makedirs(IMAGES_DIR, exist_ok=True)
     os.makedirs(EXPORTS_DIR, exist_ok=True)
-    print("Storage ready: data/uploads | data/images | data/exports")
+    os.makedirs(DIAGRAMS_DIR, exist_ok=True)
+    print("Storage ready: data/uploads | data/images | data/exports | data/diagrams")
     
     try:
         # FIX-1: Load all 3 resident models
@@ -82,8 +85,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve frontend files (index.html + mermaid.min.js) — 100% offline
+# Serve frontend files (index.html + assets) — 100% offline
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+# Serve JS files (viz-standalone.js) — 100% offline
+app.mount("/js", StaticFiles(directory=JS_DIR), name="js")
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -216,6 +221,26 @@ async def api_status():
         "strategy": CURRENT_STRATEGY,
         "rag": get_stats()
     })
+
+
+class SaveDiagramRequest(BaseModel):
+    dot_code: str
+    name: str = ""
+
+
+@app.post("/api/save-diagram")
+async def api_save_diagram(req: SaveDiagramRequest):
+    """Auto-save a DOT diagram to the diagrams output folder."""
+    import time
+    name = req.name.strip() or f"diagram_{int(time.time())}"
+    # Sanitize filename
+    safe_name = re.sub(r'[^\w\-.]', '_', name)
+    if not safe_name.endswith('.dot'):
+        safe_name += '.dot'
+    filepath = os.path.join(DIAGRAMS_DIR, safe_name)
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(req.dot_code)
+    return JSONResponse({"saved": True, "filename": safe_name, "path": filepath})
 
 
 

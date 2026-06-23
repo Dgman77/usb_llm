@@ -1,14 +1,13 @@
 """
 router.py — detects diagram vs Q&A AND which diagram type.
-Improvement 3: returns diagram subtype so llm.py uses the right Mermaid syntax.
-Improvement 4: detects document-to-diagram requests (e.g., "draw from my document")
+Returns DOT layout engine string for Graphviz rendering.
 """
 
 import re
 
-# Maps keywords → Mermaid diagram type
+# Maps keywords → DOT layout engine string
 DIAGRAM_TYPES = {
-    "sequenceDiagram": [
+    "dot_sequence": [
         "sequence",
         "api call",
         "request response",
@@ -19,7 +18,7 @@ DIAGRAM_TYPES = {
         "calls",
         "interaction",
     ],
-    "erDiagram": [
+    "fdp_er": [
         "database",
         "schema",
         "erd",
@@ -31,7 +30,7 @@ DIAGRAM_TYPES = {
         "data model",
         "relationship",
     ],
-    "classDiagram": [
+    "fdp_class": [
         "class",
         "object",
         "inheritance",
@@ -43,7 +42,7 @@ DIAGRAM_TYPES = {
         "method",
         "attribute",
     ],
-    "stateDiagram-v2": [
+    "dot_state": [
         "state",
         "transition",
         "status",
@@ -52,7 +51,7 @@ DIAGRAM_TYPES = {
         "states",
         "workflow state",
     ],
-    "gantt": [
+    "dot_gantt": [
         "gantt",
         "timeline",
         "schedule",
@@ -62,7 +61,7 @@ DIAGRAM_TYPES = {
         "duration",
         "phase",
     ],
-    "pie": [
+    "dot_pie": [
         "pie chart",
         "distribution",
         "percentage",
@@ -71,7 +70,7 @@ DIAGRAM_TYPES = {
         "statistics",
         "data distribution",
     ],
-    "mindmap": [
+    "twopi": [
         "mindmap",
         "mind map",
         "brainstorm",
@@ -80,7 +79,7 @@ DIAGRAM_TYPES = {
         "central idea",
         "branches",
     ],
-    "flowchart TD": [
+    "dot": [
         "draw",
         "flowchart",
         "flow",
@@ -95,7 +94,7 @@ DIAGRAM_TYPES = {
         "map",
         "graph",
         "sketch",
-        "mermaid",
+        "graphviz",
         "layout",
         "structure",
         "system design",
@@ -204,17 +203,29 @@ def route(user_message: str) -> str:
     return "qa"
 
 
+# Internal key → DOT layout engine mapping
+_KEY_TO_ENGINE = {
+    "dot_sequence": "dot",
+    "fdp_er": "fdp",
+    "fdp_class": "fdp",
+    "dot_state": "dot",
+    "dot_gantt": "dot",
+    "dot_pie": "dot",
+    "twopi": "twopi",
+    "dot": "dot",
+}
+
+
 def detect_diagram_type(user_message: str) -> str:
     """
-    Returns the best Mermaid diagram type for this request.
-    Improvement 3: tells llm.py exactly which syntax to use.
+    Returns the best DOT layout engine string for this request.
     """
     msg = user_message.lower().strip()
-    # Check specific types first (flowchart is the fallback)
+    # Check specific types first (generic "dot" is the fallback)
     for dtype, keywords in DIAGRAM_TYPES.items():
-        if dtype == "flowchart TD":
+        if dtype == "dot":
             continue  # check this last
         for kw in keywords:
             if re.search(r"\b" + re.escape(kw) + r"\b", msg):
-                return dtype
-    return "flowchart TD"
+                return _KEY_TO_ENGINE[dtype]
+    return "dot"

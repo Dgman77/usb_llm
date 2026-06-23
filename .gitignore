@@ -7,3 +7,6 @@ models/llama-2-7b.Q4_K_M.gguf
 /prompt.md
 models/nomic-embed-text-v1.5.Q8_0.gguf
 models/bge-reranker-v2-m3-q8_0.gguf
+/graphviz
+/js
+/diagram.md

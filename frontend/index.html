@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet">
-  <script src="/static/mermaid.min.js"></script>
+  <script src="/js/viz-standalone.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -352,7 +352,6 @@
       margin: 12px 0;
     }
     [data-theme="dark"] .diagram-box { background: #f8fafc; } /* Light grey in dark mode for contrast */
-    .diagram-box .mermaid { min-width: 300px; }
 
     /* Export button */
     .export-btn {
@@ -505,15 +504,128 @@
     @keyframes bounce { 0%,80%,100%{transform:scale(0.8);opacity:0.5} 40%{transform:scale(1.2);opacity:1} }
 
     /* Scrollbar */
+    /* Diagram compact preview in chat */
+    .diagram-preview-wrapper {
+      background: white; border: 1px solid var(--border); border-radius: 8px;
+      overflow: hidden; box-shadow: var(--shadow); margin: 6px 0; cursor: pointer;
+      transition: all 0.2s; position: relative; width: 100%; max-width: 320px;
+    }
+    [data-theme="dark"] .diagram-preview-wrapper { background: #f8fafc; }
+    .diagram-preview-wrapper:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 6px 16px -6px rgba(0,0,0,0.15); }
+    .diagram-preview-container {
+      width: 100%; height: 80px; overflow: hidden; display: flex;
+      align-items: center; justify-content: center; background: white;
+    }
+    [data-theme="dark"] .diagram-preview-container { background: #f8fafc; }
+    .diagram-preview-container svg { width: 100%; height: 100%; object-fit: contain; }
+    .diagram-preview-name {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: rgba(0,0,0,0.65); color: white; font-size: 10px;
+      font-family: 'DM Mono', monospace; padding: 3px 10px; text-align: center;
+      backdrop-filter: blur(4px); font-weight: bold;
+    }
+    .diagram-open-hint {
+      position: absolute; top: 6px; right: 6px; background: var(--accent); color: white;
+      font-size: 9px; font-family: 'DM Mono', monospace; padding: 2px 6px; border-radius: 4px;
+      opacity: 0; transition: opacity 0.2s; pointer-events: none;
+    }
+    .diagram-preview-wrapper:hover .diagram-open-hint { opacity: 1; }
+
+    /* Diagram Workstation */
+    #workstation-overlay {
+      display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: var(--bg); z-index: 1000; flex-direction: column;
+    }
+    #workstation-overlay.active { display: flex; }
+    #workstation-toolbar {
+      display: flex; align-items: center; gap: 8px; padding: 8px 16px;
+      background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap;
+    }
+    #workstation-toolbar .tb-title {
+      font-family: 'DM Mono', monospace; font-size: 12px; font-weight: 700;
+      color: var(--accent); margin-right: auto;
+    }
+    .tb-btn {
+      font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 600;
+      padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text); cursor: pointer; transition: all 0.2s;
+    }
+    .tb-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .tb-btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
+    .tb-btn.primary:hover { background: #b45309; }
+    #workstation-body { display: flex; flex: 1; overflow: hidden; }
+    #ws-viewer {
+      width: 75%; height: 100%; overflow: hidden; background: white;
+      display: flex; align-items: center; justify-content: center; padding: 0;
+    }
+    [data-theme="dark"] #ws-viewer { background: #f8fafc; }
+    #ws-viewer svg { 
+      max-width: 100%; max-height: 100%; 
+      transition: transform 0.3s; transform-origin: center center; 
+    }
+    #ws-editor {
+      width: 25%; height: 100%; display: flex; flex-direction: column;
+      border-left: 1px solid var(--border); background: var(--surface);
+    }
+    #ws-editor-header {
+      padding: 8px 12px; font-size: 11px; font-family: 'DM Mono', monospace;
+      font-weight: 700; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.1em; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    #dot-editor {
+      flex: 1; border: none; resize: none; outline: none; padding: 12px;
+      font-family: 'DM Mono', monospace; font-size: 12px; line-height: 1.5;
+      background: transparent; color: var(--text); tab-size: 2;
+    }
+    #ws-gallery {
+      display: none; background: var(--surface); border-top: 1px solid var(--border);
+      padding: 8px 16px; gap: 10px; overflow-x: auto;
+      align-items: center; flex-shrink: 0;
+    }
+    #ws-gallery.active { display: flex; }
+    .gallery-item {
+      flex-shrink: 0; width: 100px; height: 50px; border: 2px solid var(--border);
+      border-radius: 6px; overflow: hidden; cursor: pointer; background: white;
+      transition: all 0.2s; position: relative;
+    }
+    [data-theme="dark"] .gallery-item { background: #f8fafc; }
+    .gallery-item:hover { border-color: var(--accent); }
+    .gallery-item.active-thumb { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-light); }
+    .gallery-item svg { width: 100%; height: 100%; }
+    .gallery-item-label {
+      font-size: 8px; font-family: 'DM Mono', monospace; color: var(--muted);
+      text-align: center; padding: 2px; background: var(--surface);
+    }
+
+    /* Export dropdown */
+    #export-menu { display: none; position: absolute; top: 100%; right: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px; z-index: 20; box-shadow: var(--shadow); min-width: 90px; }
+    #export-menu button { display: block; width: 100%; border: none; border-radius: 4px; text-align: left; padding: 6px 12px; background: transparent; color: var(--text); font-family: 'DM Mono', monospace; font-size: 11px; cursor: pointer; }
+    #export-menu button:hover { background: var(--accent-light); color: var(--accent); }
+
+    /* Node Edit Popup */
+    #node-popup {
+      display: none; position: fixed; background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); z-index: 2000;
+      gap: 8px; min-width: 220px; flex-direction: column;
+    }
+    #node-popup.active { display: flex; }
+    #node-popup label {
+      font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 700;
+      color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    #node-popup input, #node-popup select {
+      padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace;
+      font-size: 12px; outline: none;
+    }
+    #node-popup input:focus, #node-popup select:focus { border-color: var(--accent); }
+    .popup-actions { display: flex; gap: 6px; margin-top: 6px; }
+    .popup-actions .tb-btn { flex: 1; font-size: 11px; text-align: center; }
+
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
-
-    /* Mermaid diagram styling */
-    .diagram-box .mermaid {
-      font-family: 'DM Mono', monospace !important;
-    }
   </style>
 </head>
 <body>
@@ -606,29 +718,67 @@
 
 <div id="toast"></div>
 
-<script>
-  mermaid.initialize({ 
-    startOnLoad: false, 
-    theme: 'neutral', 
-    securityLevel: 'loose',
-    themeVariables: {
-      fontFamily: '"DM Mono", monospace',
-      primaryColor: '#d97706',
-      primaryTextColor: '#1a1915',
-      primaryBorderColor: '#d97706',
-      lineColor: '#7a756b',
-      secondaryColor: '#fdf8f0',
-      tertiaryColor: '#faf6ee',
-      background: '#fdf8f0',
-      mainBkg: '#faf6ee',
-      nodeBorder: '#d97706',
-      clusterBkg: '#faf6ee',
-      clusterBorder: '#e8e0d4',
-      titleColor: '#1a1915',
-      edgeLabelBackground: '#fdf8f0'
-    }
-  });
+<!-- ── Diagram Workstation ─────────────────── -->
+<div id="workstation-overlay">
+  <div id="workstation-toolbar">
+    <span class="tb-title" id="ws-title">Diagram Workstation</span>
+    <button class="tb-btn primary" onclick="wsRenderFull()" title="Re-render DOT">Compile</button>
+    <div style="position:relative; display:inline-block;">
+      <button class="tb-btn" onclick="toggleExportMenu(event)" title="Export image">Export ▾</button>
+      <div id="export-menu">
+        <button onclick="wsExportPNG()">PNG</button>
+        <button onclick="wsExportSVG()">SVG</button>
+        <button onclick="wsExportJPEG()">JPEG</button>
+      </div>
+    </div>
+    <button class="tb-btn" onclick="wsClose()" title="Close">Close</button>
+  </div>
+  <div id="workstation-body">
+    <div id="ws-viewer">
+      <div id="ws-viz-container"></div>
+    </div>
+    <div id="ws-editor">
+      <div id="ws-editor-header">DOT Source</div>
+      <textarea id="dot-editor" spellcheck="false"></textarea>
+    </div>
+  </div>
+  <div id="ws-gallery"></div>
+</div>
 
+<!-- ── Node Edit Popup ─────────────────────── -->
+<div id="node-popup">
+  <label>Label</label>
+  <input type="text" id="popup-label" placeholder="Node label">
+  <label>Shape</label>
+  <select id="popup-shape">
+    <option value="box">box</option>
+    <option value="ellipse">ellipse</option>
+    <option value="circle">circle</option>
+    <option value="diamond">diamond</option>
+    <option value="record">record</option>
+    <option value="plaintext">plaintext</option>
+    <option value="point">point</option>
+    <option value="doublecircle">doublecircle</option>
+  </select>
+  <label>Fill color</label>
+  <input type="text" id="popup-fill" placeholder="#faf6ee or red">
+  <label>Style</label>
+  <select id="popup-style">
+    <option value="">None</option>
+    <option value="filled">filled</option>
+    <option value="rounded">rounded</option>
+    <option value="dashed">dashed</option>
+    <option value="dotted">dotted</option>
+  </select>
+  <label>Font size</label>
+  <input type="text" id="popup-fontsize" placeholder="12">
+  <div class="popup-actions">
+    <button class="tb-btn primary" onclick="applyNodeEdit()">Apply</button>
+    <button class="tb-btn" onclick="closeNodePopup()">Cancel</button>
+  </div>
+</div>
+
+<script>
   let isLoading = false;
   let documents = [];
   let abortController = null;
@@ -644,11 +794,9 @@
     if (theme === 'dark') {
       sunIcon.style.display = 'block';
       moonIcon.style.display = 'none';
-      mermaid.initialize({ theme: 'dark' });
     } else {
       sunIcon.style.display = 'none';
       moonIcon.style.display = 'block';
-      mermaid.initialize({ theme: 'neutral' });
     }
   }
 
@@ -835,7 +983,7 @@
 
   // ── Render AI response ─────────────────────────────────
   async function renderResponse(chat, data) {
-    const { mode, response } = data;
+    const { mode, response, layout_engine } = data;
 
     const wrapper = document.createElement('div');
     wrapper.className = 'msg ai';
@@ -868,34 +1016,45 @@
     }
 
     if (mode === 'diagram') {
-      const { mermaidCode, extraText } = extractMermaidWithText(response);
+      const dotCode = response;
+      const extraText = '';
 
-      if (mermaidCode) {
-        const wrapper2 = document.createElement('div');
-        wrapper2.className = 'diagram-box';
+      if (dotCode) {
+        const previewDiv = document.createElement('div');
+        previewDiv.className = 'diagram-preview-wrapper';
+        previewDiv.dataset.dot = dotCode;
+        const diagramName = getDiagramName(dotCode);
+        previewDiv.dataset.name = diagramName;
 
-        const mermaidDiv = document.createElement('div');
-        mermaidDiv.className = 'mermaid';
-        mermaidDiv.textContent = mermaidCode;
-        wrapper2.appendChild(mermaidDiv);
+        const previewContainer = document.createElement('div');
+        previewContainer.className = 'diagram-preview-container';
+        previewDiv.appendChild(previewContainer);
 
-        wrapper.appendChild(wrapper2);
+        const nameOverlay = document.createElement('div');
+        nameOverlay.className = 'diagram-preview-name';
+        nameOverlay.textContent = diagramName;
+        previewDiv.appendChild(nameOverlay);
 
-        const exportBtn = document.createElement('button');
-        exportBtn.className = 'export-btn';
-        exportBtn.textContent = 'Download PNG';
-        exportBtn.onclick = () => exportPNG(wrapper2);
-        wrapper.appendChild(exportBtn);
+        const hintBadge = document.createElement('div');
+        hintBadge.className = 'diagram-open-hint';
+        hintBadge.textContent = 'Click to open workstation \u2192';
+        previewDiv.appendChild(hintBadge);
 
+        wrapper.appendChild(previewDiv);
         chat.appendChild(wrapper);
+
+        let thumbSvg;
         try {
-          await mermaid.run({ nodes: [mermaidDiv] });
-        } catch(err) {
-          wrapper2.innerHTML = '';
-          const errMsg = document.createElement('div');
-          errMsg.style.cssText = 'font-size:13px;color:#c2414c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;';
-          errMsg.textContent = 'Could not render diagram. Try rephrasing your request.';
-          wrapper2.appendChild(errMsg);
+          thumbSvg = await renderDot(dotCode, previewContainer, layout_engine || 'dot');
+          if (thumbSvg) {
+            applyThemeToSVG(thumbSvg);
+          }
+        } catch (err) {
+          previewContainer.innerHTML = '';
+          const errDiv = document.createElement('div');
+          errDiv.style.cssText = 'font-size:11px;color:var(--red);padding:12px;';
+          errDiv.textContent = 'Could not render diagram preview. Click to open workstation.';
+          previewContainer.appendChild(errDiv);
         }
 
         if (extraText) {
@@ -904,7 +1063,11 @@
           explanation.style.marginTop = '12px';
           explanation.style.fontSize = '13px';
           explanation.textContent = extraText;
+          explanation.style.fontFamily = '"DM Mono", monospace';
           wrapper.appendChild(explanation);
+          chat.appendChild(wrapper);
+        } else {
+          chat.appendChild(wrapper);
         }
 
       } else {
@@ -944,56 +1107,385 @@
       .replace(/\n/g, '<br>');
   }
 
-  function extractMermaid(text) {
-    let cleaned = text.replace(/^(?:(?:here(?:'?s| is)?(?: a|n)?|below|here is(?: the)?|following)(?: diagram| chart| flow| schema)?:?\s*)+/gi, '');
-    cleaned = cleaned.replace(/^(?:```mermaid\s*\n?)+/gi, '');
-    
-    const fenced = cleaned.match(/```mermaid\s*([\s\S]*?)```/i);
-    if (fenced) return fenced[1].trim();
 
-    const plain = cleaned.match(/```\s*([\s\S]*?)```/);
-    if (plain) return plain[1].trim();
+  // ── DOT rendering helpers ────────────────────
+  let vizInstance = null;
 
-    const trimmed = cleaned.trim();
-    if (/^(flowchart|graph|sequenceDiagram|classDiagram|erDiagram|stateDiagram|gantt|pie|mindmap)/i.test(trimmed)) {
-      return trimmed;
-    }
-
-    return null;
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
-  function extractMermaidWithText(text) {
-    let cleaned = text.replace(/^(?:(?:here(?:'?s| is)?(?: a|n)?|below|here is(?: the)?|following)(?: diagram| chart| flow| schema)?:?\s*)+/gi, '');
-    cleaned = cleaned.replace(/^(?:```mermaid\s*\n?)+/gi, '');
-
-    const fencedMatch = cleaned.match(/```mermaid\s*([\s\S]*?)```/i);
-    if (fencedMatch) {
-      const code = fencedMatch[1].trim();
-      const beforeCode = cleaned.substring(0, fencedMatch.index).trim();
-      const afterCode = cleaned.substring(fencedMatch.index + fencedMatch[0].length).trim();
-      const extra = beforeCode || afterCode;
-      return { mermaidCode: code, extraText: extra || null };
+  async function getViz() {
+    if (!vizInstance) {
+      if (typeof Viz === 'undefined') throw new Error('Viz.js not loaded');
+      if (Viz.instance) {
+        vizInstance = await Viz.instance({ workerURL: null });
+      } else {
+        vizInstance = new Viz({ workerURL: null });
+      }
     }
-
-    const plainMatch = cleaned.match(/```\s*(flowchart|graph|sequenceDiagram|classDiagram|erDiagram|stateDiagram|gantt|pie|mindmap)([\s\S]*?)```/i);
-    if (plainMatch) {
-      const code = (plainMatch[1] + plainMatch[2]).trim();
-      const beforeCode = cleaned.substring(0, plainMatch.index).trim();
-      const afterCode = cleaned.substring(plainMatch.index + plainMatch[0].length).trim();
-      const extra = beforeCode || afterCode;
-      return { mermaidCode: code, extraText: extra || null };
-    }
-
-    const trimmed = cleaned.trim();
-    const diagramMatch = trimmed.match(/^(flowchart|graph|sequenceDiagram|classDiagram|erDiagram|stateDiagram|gantt|pie|mindmap)[\s\S]*$/i);
-    if (diagramMatch) {
-      return { mermaidCode: trimmed, extraText: null };
-    }
-
-    return { mermaidCode: null, extraText: null };
+    return vizInstance;
   }
 
-  // ── Helper elements ─────────────────────────────────────
+  async function renderDot(dotCode, container, engine) {
+    try {
+      const viz = await getViz();
+      const svg = await viz.renderSVGElement(dotCode, { format: 'svg', engine: engine || 'dot' });
+      container.innerHTML = '';
+      container.appendChild(svg);
+      return svg;
+    } catch (e) {
+      throw e;
+    }
+  }
+
+  function applyThemeToSVG(svg) {
+    const isDark = document.body.getAttribute('data-theme') === 'dark';
+    const nodeFill = isDark ? '#f8fafc' : '#faf6ee';
+    const textFill = isDark ? '#111111' : '#000000';
+    const labelBg = isDark ? '#1a1a1e' : '#fdf8f0';
+    const stroke = isDark ? '#6366f1' : '#d97706';
+    const edgeStroke = isDark ? '#8a8a90' : '#7a756b';
+    svg.querySelectorAll('.node rect, .node polygon, .node circle, .node ellipse').forEach(el => {
+      el.setAttribute('fill', nodeFill); el.setAttribute('stroke', stroke);
+    });
+    svg.querySelectorAll('.edgeLabel rect').forEach(el => el.setAttribute('fill', labelBg));
+    svg.querySelectorAll('.edgePath path').forEach(el => el.setAttribute('stroke', edgeStroke));
+    svg.querySelectorAll('text').forEach(el => {
+      el.setAttribute('fill', textFill);
+      el.setAttribute('font-weight', 'bold');
+      el.setAttribute('paint-order', 'stroke');
+      el.setAttribute('stroke', isDark ? '#f8fafc' : '#ffffff');
+      el.setAttribute('stroke-width', '0.3px');
+      el.setAttribute('stroke-linejoin', 'round');
+    });
+  }
+
+  function makeNodeClickable(svg) {
+    svg.querySelectorAll('g.node').forEach(g => {
+      const titleEl = g.querySelector('title');
+      if (!titleEl) return;
+      const nodeId = titleEl.textContent.trim();
+      if (!nodeId) return;
+      g.setAttribute('data-node-id', nodeId);
+      g.style.cursor = 'pointer';
+      g.addEventListener('click', (e) => { e.stopPropagation(); openNodePopup(nodeId, e); });
+    });
+  }
+
+  function getDiagramName(dotCode) {
+    const lm = dotCode.match(/label\s*=\s*"([^"]+)"/i);
+    if (lm) return lm[1];
+    const gm = dotCode.match(/(?:strict\s+)?(?:di)?graph\s+(\w+)/i);
+    if (gm) return gm[1];
+    return 'Diagram';
+  }
+
+  async function autoSaveDiagram(dotCode, name) {
+    try {
+      await fetch('/api/save-diagram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: (name || 'diagram') + '.dot', dot_code: dotCode }),
+      });
+    } catch (e) { console.warn('[Frontend] Auto-save failed:', e); }
+  }
+
+  // ── Node popup ──────────────────────────────
+  let wsEditingNode = null;
+  let wsOriginalDot = '';
+
+  function openNodePopup(nodeId, event) {
+    wsEditingNode = nodeId;
+    wsOriginalDot = document.getElementById('dot-editor').value;
+    const dot = wsOriginalDot;
+    const idEscaped = nodeId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const nodeRegex = new RegExp(`(?<![\\w])${idEscaped}\\s*\\[([^\\]]*)\\]`, 'i');
+    const nodeMatch = dot.match(nodeRegex);
+    let label = nodeId, shape = 'box', fillcolor = '', style = '', fontsize = '';
+    if (nodeMatch) {
+      const a = nodeMatch[1];
+      const l = a.match(/label\s*=\s*"([^"]*)"/i); if (l) label = l[1];
+      const s = a.match(/shape\s*=\s*(\w+)/i); if (s) shape = s[1];
+      const f = a.match(/fillcolor\s*=\s*"([^"]*)"/i); if (f) fillcolor = f[1];
+      const st = a.match(/style\s*=\s*"([^"]*)"/i); if (st) style = st[1];
+      const fs = a.match(/fontsize\s*=\s*"(\d+)"/i); if (fs) fontsize = fs[1];
+    }
+    document.getElementById('popup-label').value = label;
+    document.getElementById('popup-shape').value = shape;
+    document.getElementById('popup-fill').value = fillcolor;
+    document.getElementById('popup-style').value = style;
+    document.getElementById('popup-fontsize').value = fontsize;
+    const popup = document.getElementById('node-popup');
+    const mouseX = event.clientX || event.pageX;
+    const mouseY = event.clientY || event.pageY;
+    popup.style.left = Math.min(mouseX, window.innerWidth - 240) + 'px';
+    popup.style.top = Math.min(mouseY, window.innerHeight - 300) + 'px';
+    popup.classList.add('active');
+  }
+
+  function closeNodePopup() { document.getElementById('node-popup').classList.remove('active'); wsEditingNode = null; }
+
+  function applyNodeEdit() {
+    if (!wsEditingNode) return;
+    const dot = wsOriginalDot;
+    const nodeId = wsEditingNode;
+    const newLabel = document.getElementById('popup-label').value;
+    const newShape = document.getElementById('popup-shape').value;
+    const newFill = document.getElementById('popup-fill').value;
+    const newStyle = document.getElementById('popup-style').value;
+    const newFontSize = document.getElementById('popup-fontsize').value;
+    const quotedLabel = newLabel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const idEscaped = nodeId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let newAttrs = `label="${quotedLabel}"`;
+    if (newShape) newAttrs += ` shape=${newShape}`;
+    if (newFill) newAttrs += ` fillcolor="${newFill}"`;
+    if (newStyle) newAttrs += ` style="${newStyle}"`;
+    if (newFontSize) newAttrs += ` fontsize="${newFontSize}"`;
+    const nodeRegex = new RegExp(`(?<![\\w])${idEscaped}\\s*\\[[^\\]]*\\]`, 'i');
+    if (nodeRegex.test(dot)) {
+      const newDot = dot.replace(nodeRegex, `${nodeId} [${newAttrs}]`);
+      document.getElementById('dot-editor').value = newDot;
+      wsOriginalDot = newDot;
+      wsDebouncedRender();
+    }
+    closeNodePopup();
+  }
+
+  // ── Workstation controls ────────────────────
+  let wsEditTimer = null;
+  let wsCurrentDiagramId = null;
+  const sessionDiagrams = [];
+
+  function wsDebouncedRender() {
+    if (wsEditTimer) clearTimeout(wsEditTimer);
+    wsEditTimer = setTimeout(() => wsRenderFull(), 400);
+  }
+
+  function wsRenderFull() {
+    const target = document.getElementById('ws-viz-container');
+    const dotCode = document.getElementById('dot-editor').value;
+    if (!dotCode.trim()) return;
+    renderDot(dotCode, target, 'dot').then(svg => {
+      applyThemeToSVG(svg);
+      makeNodeClickable(svg);
+      wsSyncGallery();
+      autoSaveDiagram(dotCode, getDiagramName(dotCode));
+    }).catch(err => {
+      target.innerHTML = `<div style="padding:30px;color:var(--red);font-family:'DM Mono',monospace;font-size:13px;">Render error: ${escapeHtml(err.message || err.toString())}</div>`;
+    });
+  }
+
+  function wsFitView() {
+    const viewer = document.getElementById('ws-viewer');
+    const svg = document.getElementById('ws-viz-container').querySelector('svg');
+    if (!svg) return;
+    svg.style.transform = 'scale(1)';
+    viewer.scrollTop = 0; viewer.scrollLeft = 0;
+  }
+
+  function toggleExportMenu(event) {
+    event.stopPropagation();
+    const menu = document.getElementById('export-menu');
+    if (menu.style.display === 'none') {
+      menu.style.display = 'block';
+    } else {
+      menu.style.display = 'none';
+    }
+  }
+
+  function getSvgSize(svg) {
+    const vb = svg.getAttribute('viewBox');
+    if (vb) {
+      const p = vb.split(/\s+/).map(Number);
+      if (p.length === 4 && p[2] > 0 && p[3] > 0) return { w: p[2], h: p[3] };
+    }
+    const w = parseFloat(svg.getAttribute('width'));
+    const h = parseFloat(svg.getAttribute('height'));
+    if (w > 0 && h > 0) return { w, h };
+    const bb = svg.getBBox();
+    if (bb.width > 0 && bb.height > 0) return { w: bb.width, h: bb.height };
+    return { w: 800, h: 600 };
+  }
+
+  function cloneSvgForExport(svg) {
+    const clone = svg.cloneNode(true);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    const size = getSvgSize(svg);
+    clone.setAttribute('width', size.w);
+    clone.setAttribute('height', size.h);
+    clone.setAttribute('viewBox', `0 0 ${size.w} ${size.h}`);
+    clone.querySelectorAll('*').forEach(el => {
+      ['width', 'height', 'x', 'y', 'x1', 'y1', 'x2', 'y2'].forEach(attr => {
+        const v = el.getAttribute(attr);
+        if (v && v.endsWith('%')) el.removeAttribute(attr);
+      });
+    });
+    return clone;
+  }
+
+  function svgToDataUri(svgEl) {
+    const clone = cloneSvgForExport(svgEl);
+    const data = new XMLSerializer().serializeToString(clone);
+    return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(data)));
+  }
+
+  function wsExportSVG() {
+    document.getElementById('export-menu').style.display = 'none';
+    const svg = document.getElementById('ws-viz-container').querySelector('svg');
+    if (!svg) return;
+    const clone = cloneSvgForExport(svg);
+    const data = new XMLSerializer().serializeToString(clone);
+    const blob = new Blob([data], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.download = (getDiagramName(document.getElementById('dot-editor').value) || 'diagram') + '.svg';
+    a.href = url; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 500);
+  }
+
+  function wsExportPNG() {
+    document.getElementById('export-menu').style.display = 'none';
+    const svg = document.getElementById('ws-viz-container').querySelector('svg');
+    if (!svg) return;
+    const { w, h } = getSvgSize(svg);
+    const scale = 2;
+    const dataUri = svgToDataUri(svg);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = w * scale;
+      canvas.height = h * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const a = document.createElement('a');
+      a.download = (getDiagramName(document.getElementById('dot-editor').value) || 'diagram') + '.png';
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    };
+    img.onerror = () => showToast('Export failed — could not render image');
+    img.src = dataUri;
+  }
+
+  function wsExportJPEG() {
+    document.getElementById('export-menu').style.display = 'none';
+    const svg = document.getElementById('ws-viz-container').querySelector('svg');
+    if (!svg) return;
+    const { w, h } = getSvgSize(svg);
+    const scale = 2;
+    const dataUri = svgToDataUri(svg);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = w * scale;
+      canvas.height = h * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const a = document.createElement('a');
+      a.download = (getDiagramName(document.getElementById('dot-editor').value) || 'diagram') + '.jpg';
+      a.href = canvas.toDataURL('image/jpeg', 0.92);
+      a.click();
+    };
+    img.onerror = () => showToast('Export failed — could not render image');
+    img.src = dataUri;
+  }
+
+  function wsClose() {
+    document.getElementById('workstation-overlay').classList.remove('active');
+    document.getElementById('export-menu').style.display = 'none';
+    wsCurrentDiagramId = null;
+    if (wsEditTimer) clearTimeout(wsEditTimer);
+  }
+
+  function wsOpenDiagram(dotCode, name) {
+    document.getElementById('workstation-overlay').classList.add('active');
+    wsCurrentDiagramId = name;
+    document.getElementById('dot-editor').value = dotCode;
+    document.getElementById('ws-title').textContent = name || 'Diagram Workstation';
+    wsRenderFull();
+    wsSyncGallery();
+  }
+
+  function wsSyncGallery() {
+    const gallery = document.getElementById('ws-gallery');
+    const currentDot = document.getElementById('dot-editor').value;
+    const currentName = getDiagramName(currentDot);
+    const existing = sessionDiagrams.findIndex(d => d.name === currentName);
+    if (existing >= 0) sessionDiagrams[existing].dot = currentDot;
+    else sessionDiagrams.push({ id: Date.now(), name: currentName, dot: currentDot, timestamp: Date.now() });
+    renderGallery();
+  }
+
+  function renderGallery() {
+    const gallery = document.getElementById('ws-gallery');
+    gallery.innerHTML = '';
+    if (sessionDiagrams.length === 0) { gallery.classList.remove('active'); return; }
+    gallery.classList.add('active');
+    sessionDiagrams.forEach((diagram, idx) => {
+      const item = document.createElement('div');
+      item.className = 'gallery-item' + (idx === sessionDiagrams.length - 1 && wsCurrentDiagramId === diagram.name ? ' active-thumb' : '');
+      item.title = diagram.name;
+      item.onclick = () => {
+        document.getElementById('dot-editor').value = diagram.dot;
+        wsCurrentDiagramId = diagram.name;
+        document.getElementById('ws-title').textContent = diagram.name;
+        wsRenderFull();
+        document.querySelectorAll('.gallery-item').forEach(g => g.classList.remove('active-thumb'));
+        item.classList.add('active-thumb');
+      };
+      const svgContainer = document.createElement('div');
+      svgContainer.style.cssText = 'width:100%;height:100%;overflow:hidden;display:flex;align-items:center;justify-content:center;pointer-events:none;';
+      renderDot(diagram.dot, svgContainer, 'dot').catch(() => {});
+      item.appendChild(svgContainer);
+      const label = document.createElement('div');
+      label.className = 'gallery-item-label';
+      label.textContent = diagram.name;
+      item.appendChild(label);
+      gallery.appendChild(item);
+    });
+  }
+
+  // Click on diagram preview → open workstation
+  document.addEventListener('click', (e) => {
+    const preview = e.target.closest('.diagram-preview-wrapper');
+    if (preview) {
+      const dotCode = preview.dataset.dot;
+      const name = preview.dataset.name || 'Diagram';
+      wsOpenDiagram(dotCode, name);
+    }
+  });
+
+  document.getElementById('dot-editor').addEventListener('input', () => wsDebouncedRender());
+
+  document.addEventListener('click', (e) => {
+    const popup = document.getElementById('node-popup');
+    if (popup.classList.contains('active') && !popup.contains(e.target)) {
+      if (!document.getElementById('ws-viewer').contains(e.target)) closeNodePopup();
+    }
+    const exportMenu = document.getElementById('export-menu');
+    if (exportMenu && exportMenu.style.display === 'block' && !e.target.closest('#export-menu') && !e.target.closest('[onclick*="toggleExportMenu"]')) {
+      exportMenu.style.display = 'none';
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { const overlay = document.getElementById('workstation-overlay'); if (overlay.classList.contains('active')) wsClose(); closeNodePopup(); }
+    if (e.key === 'Tab' && document.activeElement === document.getElementById('dot-editor')) {
+      e.preventDefault();
+      const ta = document.getElementById('dot-editor');
+      const start = ta.selectionStart;
+      ta.value = ta.value.substring(0, start) + '  ' + ta.value.substring(ta.selectionEnd);
+      ta.selectionStart = ta.selectionEnd = start + 2;
+    }
+  });
+
+  // ── Helper elements ──────────────────────────
   function createBubble(role, text) {
     const msg = document.createElement('div');
     msg.className = `msg ${role}`;

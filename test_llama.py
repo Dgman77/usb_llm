@@ -124,15 +124,15 @@ except Exception as e:
 
 print()
 
-# ── TEST 5: Quick mermaid generation ─────────────────────
+# ── TEST 5: Quick DOT generation ──────────────────────
 print("TEST 5: Testing diagram generation...")
-print("        Asking for a simple flowchart")
+print("        Asking for a simple DOT digraph")
 print()
 
 try:
     diagram_prompt = (
         "<|system|>\n"
-        "Output ONLY a mermaid code block. Nothing else.\n"
+        "Output only valid Graphviz DOT code. Start with `digraph G {`. Use `rankdir`, `node [shape=box]`, and `edge` attributes. No markdown fences. No explanation text. No commentary.\n"
         "<|end|>\n"
         "<|user|>\n"
         "Draw a simple 3-step login flowchart.\n"
@@ -147,16 +147,16 @@ try:
         echo=False,
     )
     answer = result["choices"][0]["text"].strip()
-    has_mermaid = "flowchart" in answer.lower() or "graph" in answer.lower() or "```mermaid" in answer.lower()
+    has_dot = "digraph" in answer.lower() or "graph" in answer.lower() or "->" in answer
     print(f"  Output preview:")
     for line in answer.split("\n")[:6]:
         print(f"    {line}")
-    if has_mermaid:
+    if has_dot:
         print()
-        print("  OK   Mermaid syntax detected in output!")
+        print("  OK   DOT syntax detected in output!")
     else:
         print()
-        print("  WARN Output doesn't look like Mermaid — model may need")
+        print("  WARN Output doesn't look like DOT — model may need")
         print("       a better prompt or different model version.")
 except Exception as e:
     print(f"  FAIL: {e}")

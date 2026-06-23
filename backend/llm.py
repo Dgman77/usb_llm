@@ -2,9 +2,9 @@
 llm.py — AI model loader and diagram/QA generator.
 
 Improvements applied:
-  1. Smarter prompt: 3 concrete Mermaid examples per diagram type
-  2. Output validator: checks Mermaid syntax, retries once if invalid
-  3. Diagram type routing: uses correct syntax (flowchart/sequence/er/class/state)
+  1. Smarter prompt: concrete Graphviz DOT examples per diagram type
+  2. Output validator: checks DOT syntax, retries once if invalid
+  3. Diagram type routing: uses correct DOT layout engine
 """
 
 import os
@@ -505,237 +505,285 @@ def _stop_tokens() -> list:
     return ["[INST]", "</s>", "```\n\n"]
 
 
-# ── Improvement 1: Diagram prompts with 3 examples each ───────────────────────
+# ── Improvement 1: Diagram prompts with DOT examples ──────────────────────────
 
 DIAGRAM_PROMPTS = {
-    "flowchart TD": """Output ONLY a Mermaid flowchart. Start with ```mermaid, end with ```.
+    "dot": """Output ONLY valid Graphviz DOT code. Start with `digraph G {`. Use `rankdir`, `node [shape=box]`, and `edge` attributes. No markdown fences. No explanation text. No commentary.
 
-SYNTAX RULES (follow exactly):
-- Use --> for arrows (NOT -> which is invalid)
-- Node IDs: single letters or short words (A, B, C or Login, Auth)
-- Labels in square brackets: A["Label text here"]
-- Decision diamonds: C{"Is condition met?"}
-- Rounded: D("Rounded label")
-- Subgraphs: subgraph Title ... end
-- Arrow labels: A -->|label text| B
-- NO semicolons at end of lines
-- NO pipes | inside node labels
+    SYNTAX RULES:
+    - Start with: digraph G {
+    - Node IDs: short alphanumeric (A, B, Login, Auth)
+    - Labels: A [label="Label text"];
+    - Edges: A -> B;
+    - Edge labels: A -> B [label="description"];
+    - Subgraphs: subgraph cluster_Name { label="Title"; ... }
+    - End with: }
 
-CONTENT RULES:
-- NEVER generic: "Start", "End", "Decision", "Process"
-- Every node = SPECIFIC real action (e.g. "User submits login form")
-- At LEAST 10 nodes, use subgraphs to organize
+    STYLING:
+    - node [shape=box, style="rounded,filled", fillcolor="#faf6ee", fontname="Arial", fontsize=12];
+    - edge [fontname="Arial", fontsize=11, fontcolor="#000000"];
+    - All node labels must be SPECIFIC real actions from the topic
 
-Example:
-```mermaid
-flowchart TD
-    subgraph Frontend
-        A["Customer opens product page"] --> B["Add item to shopping cart"]
-        B --> C{"Cart has 3+ items?"}
-        C -->|Yes| D["Show bulk discount banner"]
-        C -->|No| E["Show standard pricing"]
-    end
-    subgraph Checkout
-        D --> F["Enter shipping address"]
-        E --> F
-        F --> G["Select payment method"]
-        G --> H{"Credit card valid?"}
-        H -->|Yes| I["Process payment via Stripe"]
-        H -->|No| J["Display card error"]
-        J --> G
-    end
-    subgraph Fulfillment
-        I --> K["Generate order confirmation"]
-        K --> L["Send confirmation email"]
-        L --> M["Update inventory database"]
-        M --> N["Queue for warehouse picking"]
-    end
-```
-Now generate a DETAILED, COMPLEX flowchart with subgraphs for:""",
-    "sequenceDiagram": """Output ONLY a Mermaid sequenceDiagram. Start with ```mermaid, end with ```.
+    CONTENT RULES:
+    - NEVER generic: "Start", "End", "Decision", "Process"
+    - Every node = SPECIFIC real action
+    - At LEAST 10 nodes, use subgraphs to organize
+    - Edge labels must describe actual data or actions
+
+    Example:
+    digraph G {
+        rankdir=TB;
+        node [shape=box, style="rounded,filled", fillcolor="#faf6ee", fontname="Arial", fontsize=12];
+        edge [fontname="Arial", fontsize=11, fontcolor="#000000"];
+        subgraph cluster_Frontend {
+            label="Frontend";
+            A [label="Customer opens product page"];
+            B [label="Add item to shopping cart"];
+            C [label="Cart has 3+ items?" shape=diamond];
+            D [label="Show bulk discount"];
+            E [label="Standard pricing"];
+            A -> B;
+            B -> C;
+            C -> D [label="Yes"];
+            C -> E [label="No"];
+        }
+        subgraph cluster_Checkout {
+            label="Checkout";
+            F [label="Enter shipping address"];
+            G [label="Select payment method"];
+            H [label="Credit card valid?" shape=diamond];
+            I [label="Process payment via Stripe"];
+            J [label="Display card error"];
+            D -> F;
+            E -> F;
+            F -> G;
+            G -> H;
+            H -> I [label="Yes"];
+            H -> J [label="No"];
+            J -> G;
+        }
+        subgraph cluster_Fulfillment {
+            label="Fulfillment";
+            K [label="Generate order confirmation"];
+            L [label="Send confirmation email"];
+            M [label="Update inventory database"];
+            I -> K;
+            K -> L;
+            L -> M;
+        }
+    }
+    Now generate a DETAILED, COMPLEX DOT digraph with subgraphs for:""",
+    "dot_sequence": """Output ONLY valid Graphviz DOT code. Start with `digraph G {`. No markdown fences. No explanation.
+
+Use rankdir=LR for left-to-right sequence flow.
 
 CRITICAL RULES:
-- Use SPECIFIC actor names (e.g. "UserBrowser", "AuthServer", "PaymentDB") not generic "Client", "Server"
-- Every message MUST describe the ACTUAL data or action (e.g. "POST /api/login {email, password}")
+- Use SPECIFIC actor/system names
+- Every edge label MUST describe the ACTUAL data or action
 - Include at LEAST 6 message exchanges
-- Show error paths too
+- Use invisible edges for ordering
 
 Example — user registration:
-```mermaid
-sequenceDiagram
-    UserBrowser->>AuthAPI: POST /register {name, email, password}
-    AuthAPI->>UserDB: SELECT * WHERE email = ?
-    UserDB-->>AuthAPI: No existing user found
-    AuthAPI->>UserDB: INSERT new user record
-    UserDB-->>AuthAPI: User ID 42 created
-    AuthAPI->>EmailService: Send verification email to user
-    EmailService-->>AuthAPI: Email queued successfully
-    AuthAPI-->>UserBrowser: 201 Created {userId, verifyToken}
-```
-Now generate a DETAILED sequence diagram with SPECIFIC messages for:""",
-    "erDiagram": """Output ONLY a Mermaid erDiagram. Start with ```mermaid, end with ```.
+digraph G {
+    rankdir=LR;
+    node [shape=box, style="rounded,filled", fillcolor="#faf6ee"];
+    UserBrowser [label="User Browser"];
+    AuthAPI [label="Auth API"];
+    UserDB [label="User DB"];
+    EmailSvc [label="Email Service"];
+    UserBrowser -> AuthAPI [label="POST /register"];
+    AuthAPI -> UserDB [label="SELECT WHERE email=?"];
+    UserDB -> AuthAPI [label="No existing user" style=dashed];
+    AuthAPI -> UserDB [label="INSERT new user"];
+    UserDB -> AuthAPI [label="User ID 42 created" style=dashed];
+    AuthAPI -> EmailSvc [label="Send verification email"];
+    EmailSvc -> AuthAPI [label="Email queued" style=dashed];
+    AuthAPI -> UserBrowser [label="201 Created" style=dashed];
+}
+Now generate a DETAILED sequence-style DOT diagram with SPECIFIC messages for:""",
+    "fdp_er": """Output ONLY valid Graphviz DOT code for an entity-relationship diagram. Start with `graph ER {`. No markdown fences. No explanation.
 
 CRITICAL RULES:
 - Use SPECIFIC table/entity names from the topic
-- Include field definitions with types (int, string, datetime, boolean)
-- Mark PK/FK relationships
-- Include at LEAST 4 entities with fields
+- Show fields inside HTML-like labels or record shapes
+- Include at LEAST 4 entities
+- Use -- for undirected edges with relationship labels
 
 Example — hospital system:
-```mermaid
-erDiagram
-    PATIENT ||--o{ APPOINTMENT : books
-    DOCTOR ||--o{ APPOINTMENT : attends
-    DEPARTMENT ||--o{ DOCTOR : employs
-    APPOINTMENT ||--o{ PRESCRIPTION : generates
-    PATIENT {
-        int patient_id PK
-        string full_name
-        datetime date_of_birth
-        string blood_type
-        string phone
-    }
-    DOCTOR {
-        int doctor_id PK
-        string full_name
-        string specialization
-        int department_id FK
-    }
-    APPOINTMENT {
-        int appointment_id PK
-        int patient_id FK
-        int doctor_id FK
-        datetime scheduled_at
-        string status
-    }
-```
-Now generate a DETAILED ER diagram with SPECIFIC entities and fields for:""",
-    "classDiagram": """Output ONLY a Mermaid classDiagram. Start with ```mermaid, end with ```.
+graph ER {
+    layout=fdp;
+    node [shape=record, style=filled, fillcolor="#faf6ee"];
+    Patient [label="{Patient|patient_id : int PK\lfull_name : string\ldate_of_birth : date\lblood_type : string\l}"];
+    Doctor [label="{Doctor|doctor_id : int PK\lfull_name : string\lspecialization : string\ldepartment_id : int FK\l}"];
+    Appointment [label="{Appointment|appt_id : int PK\lpatient_id : int FK\ldoctor_id : int FK\lscheduled_at : datetime\lstatus : string\l}"];
+    Department [label="{Department|dept_id : int PK\lname : string\lfloor : int\l}"];
+    Patient -- Appointment [label="books"];
+    Doctor -- Appointment [label="attends"];
+    Department -- Doctor [label="employs"];
+}
+Now generate a DETAILED ER DOT diagram with SPECIFIC entities and fields for:""",
+    "fdp_class": """Output ONLY valid Graphviz DOT code for a class diagram. Start with `digraph G {`. No markdown fences. No explanation.
 
 CRITICAL RULES:
 - Use SPECIFIC class names from the topic
-- Include REAL attributes with types and REAL methods
-- Show inheritance, composition, and associations
+- Include REAL attributes and methods in record labels
+- Show inheritance with edge [arrowhead=empty]
 - Include at LEAST 4 classes
 
 Example — online store:
-```mermaid
-classDiagram
-    Product <|-- PhysicalProduct
-    Product <|-- DigitalProduct
-    ShoppingCart o-- Product
-    Order *-- OrderItem
-    Product : +int productId
-    Product : +String name
-    Product : +float price
-    Product : +getDiscountedPrice()
-    PhysicalProduct : +float weight
-    PhysicalProduct : +calculateShipping()
-    DigitalProduct : +String downloadUrl
-    DigitalProduct : +generateLicense()
-    ShoppingCart : +List~Product~ items
-    ShoppingCart : +addItem(Product)
-    ShoppingCart : +calculateTotal()
-```
-Now generate a DETAILED class diagram with SPECIFIC classes for:""",
-    "stateDiagram-v2": """Output ONLY a Mermaid stateDiagram-v2. Start with ```mermaid, end with ```.
+digraph G {
+    rankdir=BT;
+    node [shape=record, style=filled, fillcolor="#faf6ee"];
+    Product [label="{Product|+productId : int\l+name : String\l+price : float\l|+getDiscountedPrice()\l}"];
+    PhysicalProduct [label="{PhysicalProduct|+weight : float\l|+calculateShipping()\l}"];
+    DigitalProduct [label="{DigitalProduct|+downloadUrl : String\l|+generateLicense()\l}"];
+    ShoppingCart [label="{ShoppingCart|+items : List\l|+addItem()\l+calculateTotal()\l}"];
+    PhysicalProduct -> Product [arrowhead=empty];
+    DigitalProduct -> Product [arrowhead=empty];
+    ShoppingCart -> Product [arrowhead=diamond, label="contains"];
+}
+Now generate a DETAILED class DOT diagram with SPECIFIC classes for:""",
+    "dot_state": """Output ONLY valid Graphviz DOT code for a state diagram. Start with `digraph G {`. No markdown fences. No explanation.
 
 CRITICAL RULES:
-- Use SPECIFIC state names from the topic (not generic "State1", "State2")
+- Use SPECIFIC state names from the topic
 - Every transition MUST have a SPECIFIC event label
 - Include at LEAST 6 states
+- Use point shape for start/end nodes
 
 Example — bug tracking:
-```mermaid
-stateDiagram-v2
-    [*] --> Reported
-    Reported --> Triaged : developer reviews bug
-    Triaged --> InProgress : assigned to developer
-    InProgress --> CodeReview : fix submitted as PR
-    CodeReview --> InProgress : reviewer requests changes
-    CodeReview --> Testing : PR approved and merged
-    Testing --> Verified : QA confirms fix works
-    Testing --> InProgress : QA finds regression
-    Verified --> Closed : deployed to production
-    Closed --> [*]
-```
-Now generate a DETAILED state diagram with SPECIFIC states for:""",
-    "gantt": """Output ONLY a Mermaid gantt chart. Start with ```mermaid, end with ```.
+digraph G {
+    rankdir=LR;
+    node [shape=box, style="rounded,filled", fillcolor="#faf6ee"];
+    start [shape=point, width=0.2];
+    end_state [shape=doublecircle, width=0.3, label=""];
+    Reported [label="Reported"];
+    Triaged [label="Triaged"];
+    InProgress [label="In Progress"];
+    CodeReview [label="Code Review"];
+    Testing [label="Testing"];
+    Verified [label="Verified"];
+    Closed [label="Closed"];
+    start -> Reported;
+    Reported -> Triaged [label="developer reviews"];
+    Triaged -> InProgress [label="assigned"];
+    InProgress -> CodeReview [label="PR submitted"];
+    CodeReview -> InProgress [label="changes requested"];
+    CodeReview -> Testing [label="PR merged"];
+    Testing -> Verified [label="QA passed"];
+    Testing -> InProgress [label="regression found"];
+    Verified -> Closed [label="deployed"];
+    Closed -> end_state;
+}
+Now generate a DETAILED state DOT diagram with SPECIFIC states for:""",
+    "dot_gantt": """Output ONLY valid Graphviz DOT code representing a timeline/schedule. Start with `digraph G {`. No markdown fences. No explanation.
 
 CRITICAL RULES:
-- Use a SPECIFIC title related to the topic
-- Use SPECIFIC task names (not "Task 1", "Task 2")
-- Include at LEAST 3 sections with multiple tasks each
+- Use rankdir=LR for timeline flow
+- Use SPECIFIC task names from the topic
+- Group into subgraph clusters by phase
+- Include at LEAST 8 tasks across 3+ phases
 
 Example — mobile app launch:
-```mermaid
-gantt
-    title Mobile App Launch Plan
-    dateFormat  YYYY-MM-DD
-    section Research
-    User interviews        :a1, 2024-01-01, 14d
-    Competitor analysis    :a2, 2024-01-08, 7d
-    section Design
-    Wireframes             :b1, after a1, 10d
-    UI mockups             :b2, after b1, 10d
-    Usability testing      :b3, after b2, 5d
-    section Development
-    Backend API            :c1, after b2, 21d
-    iOS frontend           :c2, after b2, 28d
-    Android frontend       :c3, after b2, 28d
-    section Launch
-    Beta testing           :d1, after c1, 14d
-    App store submission   :d2, after d1, 7d
-```
-Now generate a DETAILED Gantt chart with SPECIFIC tasks for:""",
-    "pie": """Output ONLY a Mermaid pie chart. Start with ```mermaid, end with ```.
+digraph G {
+    rankdir=LR;
+    node [shape=box, style="filled,rounded", fillcolor="#faf6ee"];
+    subgraph cluster_Research {
+        label="Research";
+        A [label="User interviews\n14 days"];
+        B [label="Competitor analysis\n7 days"];
+        A -> B;
+    }
+    subgraph cluster_Design {
+        label="Design";
+        C [label="Wireframes\n10 days"];
+        D [label="UI mockups\n10 days"];
+        E [label="Usability testing\n5 days"];
+        C -> D -> E;
+    }
+    subgraph cluster_Dev {
+        label="Development";
+        F [label="Backend API\n21 days"];
+        G [label="iOS frontend\n28 days"];
+        H [label="Android frontend\n28 days"];
+    }
+    B -> C;
+    E -> F;
+    E -> G;
+    E -> H;
+}
+Now generate a DETAILED timeline/Gantt DOT diagram with SPECIFIC tasks for:""",
+    "dot_pie": """Output ONLY valid Graphviz DOT code representing a data distribution. Start with `digraph G {`. No markdown fences. No explanation.
+
+Since Graphviz doesn't natively support pie charts, use a radial layout with sized nodes.
 
 CRITICAL RULES:
-- Use a SPECIFIC title related to the topic
-- Use SPECIFIC, REAL labels (not "Category A", "Category B")
-- Use realistic percentage values that add up properly
+- Use SPECIFIC, REAL labels
+- Show percentages in labels
+- Use different fillcolors for each segment
 
 Example:
-```mermaid
-pie title Cloud Infrastructure Costs 2024
-    "Compute (EC2/VMs)" : 35
-    "Storage (S3/Blob)" : 20
-    "Networking (CDN)" : 15
-    "Database (RDS)" : 18
-    "Monitoring" : 7
-    "Other services" : 5
-```
-Now generate a DETAILED pie chart with SPECIFIC labels for:""",
-    "mindmap": """Output ONLY a Mermaid mindmap. Start with ```mermaid, end with ```.
+digraph G {
+    rankdir=TB;
+    label="Cloud Infrastructure Costs 2024";
+    labelloc=t;
+    fontsize=16;
+    node [shape=box, style="filled,rounded"];
+    A [label="Compute (EC2/VMs)\n35%" fillcolor="#f59e0b"];
+    B [label="Storage (S3/Blob)\n20%" fillcolor="#14b8a6"];
+    C [label="Networking (CDN)\n15%" fillcolor="#6366f1"];
+    D [label="Database (RDS)\n18%" fillcolor="#f43f5e"];
+    E [label="Monitoring\n7%" fillcolor="#10b981"];
+    F [label="Other services\n5%" fillcolor="#8b5cf6"];
+    Center [label="Total Budget" shape=ellipse, style="filled", fillcolor="#fdf8f0"];
+    Center -> A;
+    Center -> B;
+    Center -> C;
+    Center -> D;
+    Center -> E;
+    Center -> F;
+}
+Now generate a DETAILED distribution DOT diagram with SPECIFIC labels for:""",
+    "twopi": """Output ONLY valid Graphviz DOT code for a mind map. Start with `digraph G {`. Use layout=twopi. No markdown fences. No explanation.
 
 CRITICAL RULES:
-- Root node MUST be the SPECIFIC topic
+- Root node MUST be the SPECIFIC topic (use ellipse shape)
 - Every branch and leaf MUST have SPECIFIC, REAL content
 - NEVER use generic labels like "Topic", "Subtopic", "Item"
 - Include at LEAST 4 branches with 2-3 leaves each
 
-Example — machine learning project:
-```mermaid
-mindmap
-  root((Machine Learning Pipeline))
-    Data Collection
-      Web scraping APIs
-      CSV file imports
-      Database queries
-    Preprocessing
-      Handle missing values
-      Feature scaling
-      Train-test split
-    Model Training
-      Random Forest
-      Neural Network
-      Cross validation
-    Deployment
-      REST API endpoint
-      Docker container
-      Monitoring dashboard
-```
-Now generate a DETAILED mindmap with SPECIFIC content for:""",
+Example — machine learning:
+digraph G {
+    layout=twopi;
+    root=center;
+    node [shape=box, style="filled,rounded", fillcolor="#faf6ee"];
+    center [label="ML Pipeline" shape=ellipse, fillcolor="#fef3e2", fontsize=14];
+    dc [label="Data Collection"];
+    dc1 [label="Web scraping APIs"];
+    dc2 [label="CSV file imports"];
+    dc3 [label="Database queries"];
+    pp [label="Preprocessing"];
+    pp1 [label="Handle missing values"];
+    pp2 [label="Feature scaling"];
+    pp3 [label="Train-test split"];
+    mt [label="Model Training"];
+    mt1 [label="Random Forest"];
+    mt2 [label="Neural Network"];
+    mt3 [label="Cross validation"];
+    dp [label="Deployment"];
+    dp1 [label="REST API endpoint"];
+    dp2 [label="Docker container"];
+    dp3 [label="Monitoring dashboard"];
+    center -> dc;
+    center -> pp;
+    center -> mt;
+    center -> dp;
+    dc -> dc1; dc -> dc2; dc -> dc3;
+    pp -> pp1; pp -> pp2; pp -> pp3;
+    mt -> mt1; mt -> mt2; mt -> mt3;
+    dp -> dp1; dp -> dp2; dp -> dp3;
+}
+Now generate a DETAILED mind map DOT diagram with SPECIFIC content for:""",
 }
 
 RAG_SYSTEM_PROMPT = """You are a strict document assistant. Answer ONLY using the context provided.
@@ -790,7 +838,9 @@ STRICTNESS:
 - If the excerpts are only 'related' but don't answer the question directly, explain what related information IS present instead of guessing.
 """
 
-DOC_DIAGRAM_SYSTEM = """You are a document-to-diagram converter. Read the document and output a Mermaid diagram.
+DOC_DIAGRAM_SYSTEM = """You are a document-to-diagram converter. Read the document and output valid Graphviz DOT code.
+
+Output only valid Graphviz DOT code. Start with `digraph G {`. Use `rankdir`, `node [shape=box]`, and `edge` attributes. No markdown fences. No explanation text. No commentary.
 
 MANDATORY — EXTRACT REAL CONTENT:
 1. Read EVERY line of the document text below
@@ -800,34 +850,20 @@ MANDATORY — EXTRACT REAL CONTENT:
 
 BUILD THE DIAGRAM:
 • Every entity/person/system from the document = a node with its REAL name
-• Every action/relationship = an arrow with a SPECIFIC label from the document
-• Use subgraphs to group related items by section or department
+• Every action/relationship = an edge with a SPECIFIC label from the document
+• Use subgraph cluster_ groups to organize related items by section
 • Include at LEAST 8 nodes with REAL content from the document
-• Arrow labels: use ACTUAL verbs from the document (e.g. "approves budget", "sends invoice")
+• Edge labels: use ACTUAL verbs from the document (e.g. label="approves budget")
 
 RULES:
-• Output ONLY the ```mermaid code block — NO text before or after
-• If the document describes a process → use flowchart TD
-• If the document describes messages/API calls → use sequenceDiagram
-• If the document describes database tables → use erDiagram
-• If the document describes classes/objects → use classDiagram
-• If the document describes states/lifecycle → use stateDiagram-v2
+• Output ONLY valid DOT code — NO text before or after
+• Start with digraph G { and end with }
+• Use node [shape=box, style=\"rounded,filled\", fillcolor=\"#faf6ee\"] for styling
+• Use A -> B [label=\"action\"] for labeled edges
 """
 
 
 # ── Improvement 2: Output validator ───────────────────────────────────────────
-
-MERMAID_STARTERS = [
-    "flowchart",
-    "graph ",
-    "sequencediagram",
-    "erdiagram",
-    "classdiagram",
-    "statediagram",
-    "gantt",
-    "pie",
-    "mindmap",
-]
 
 # Generic placeholder labels that indicate a low-quality diagram
 _PLACEHOLDER_LABELS = {
@@ -840,8 +876,8 @@ _PLACEHOLDER_LABELS = {
 def _has_placeholder_labels(text: str) -> bool:
     """Return True if the diagram has too many generic/placeholder node labels."""
     lower = text.lower()
-    # Extract node labels from brackets like [Start] or [Decision]
-    labels = re.findall(r'\[([^\]]+)\]', lower)
+    # Extract node labels from label="..." attributes in DOT
+    labels = re.findall(r'label\s*=\s*"([^"]+)"', lower)
     if not labels:
         return False
     placeholder_count = sum(1 for lbl in labels if lbl.strip() in _PLACEHOLDER_LABELS)
@@ -849,140 +885,102 @@ def _has_placeholder_labels(text: str) -> bool:
     return placeholder_count > len(labels) * 0.4
 
 
-def _is_valid_mermaid(text: str) -> bool:
-    """Check if text contains a valid Mermaid diagram."""
+def _is_valid_dot(text: str) -> bool:
+    """Check if text contains valid Graphviz DOT code."""
     lower = text.lower()
-    # Must have mermaid code block or at least diagram syntax
-    has_mermaid_fence = "```mermaid" in lower
-    has_any_fence = "```" in lower
-    # Check for any valid Mermaid diagram type
-    has_diagram_type = any(
-        re.search(rf"\b{re.escape(starter)}\b", lower)
-        for starter in [
-            "flowchart",
-            "graph ",
-            "sequencediagram",
-            "erdiagram",
-            "classdiagram",
-            "statediagram",
-            "gantt",
-            "pie",
-            "mindmap",
-        ]
-    )
-    # Accept if has mermaid fence + diagram, OR any fence + diagram (implied mermaid)
-    return (has_mermaid_fence and has_diagram_type) or (
-        has_any_fence and has_diagram_type
-    )
+    has_graph = "digraph" in lower or re.search(r'\bgraph\b', lower) is not None
+    has_edge = "->" in text or "--" in text
+    return has_graph and has_edge
 
 
 def _extract_or_fix(text: str) -> str:
     """
-    Try to extract mermaid block.
-    If model forgot the fences, wrap it automatically.
+    Try to extract DOT code from LLM output.
+    If model used fences, strip them. If no digraph wrapper, add one.
     """
-    # Already has ```mermaid fence
-    m = re.search(r"```mermaid\s*([\s\S]*?)```", text, re.IGNORECASE)
+    # Has ```dot or ```graphviz fence
+    m = re.search(r"```(?:dot|graphviz)\s*([\s\S]*?)```", text, re.IGNORECASE)
     if m:
-        return "```mermaid\n" + m.group(1).strip() + "\n```"
+        return m.group(1).strip()
 
-    # Has ``` fence but no mermaid label - match any diagram type
-    m = re.search(
-        r"```\s*(flowchart|graph|sequenceDiagram|erDiagram|classDiagram|stateDiagram|stateDiagram-v2|gantt|pie|mindmap)([\s\S]*?)```",
-        text,
-        re.IGNORECASE,
-    )
+    # Has generic ``` fence with DOT inside
+    m = re.search(r"```\s*([\s\S]*?)```", text, re.IGNORECASE)
     if m:
-        return "```mermaid\n" + m.group(1) + m.group(2).strip() + "\n```"
+        inner = m.group(1).strip()
+        if "digraph" in inner.lower() or re.search(r'\bgraph\b', inner, re.I):
+            return inner
 
-    # No fence but starts with diagram keyword — wrap it
+    # No fence but has digraph/graph keyword — extract from there
     stripped = text.strip()
-    for starter in [
-        "flowchart",
-        "graph ",
-        "sequenceDiagram",
-        "erDiagram",
-        "classDiagram",
-        "stateDiagram",
-        "stateDiagram-v2",
-        "gantt",
-        "pie",
-        "mindmap",
-    ]:
-        if stripped.lower().startswith(starter.lower()):
-            return "```mermaid\n" + stripped + "\n```"
+    for line_no, line in enumerate(stripped.splitlines()):
+        ll = line.strip().lower()
+        if ll.startswith("digraph") or re.match(r'^graph\b', ll):
+            return "\n".join(stripped.splitlines()[line_no:]).strip()
 
-    return text  # give up, return as-is
+    return stripped  # return as-is
 
 
 # ── Helpers for document-based diagram generation ──────────────────────────────
 
-def _get_diagram_type_hint(diagram_type: str) -> str:
-    """Return syntax rules only — NO copyable example labels."""
+def _get_diagram_type_hint(layout_engine: str) -> str:
+    """Return DOT syntax rules for the given layout engine."""
     hints = {
-        "flowchart TD": "Arrows: A --> B, Labels: A[\"text\"] for boxes, C{\"question?\"} for diamonds, -->|label| for arrow text, subgraph Title ... end for groups",
-        "sequenceDiagram": "Arrows: ActorA->>ActorB: message, ActorB-->>ActorA: reply, Use participant to declare actors",
-        "erDiagram": "Relations: TABLE1 ||--o{ TABLE2 : relationship, Fields: int id PK, string name",
-        "classDiagram": "Relations: Parent <|-- Child, Fields: +String name, Methods: +methodName()",
-        "stateDiagram-v2": "Transitions: StateA --> StateB : event, Use [*] for start/end",
-        "gantt": "Structure: title, dateFormat YYYY-MM-DD, section Name, TaskName :id, date, duration",
-        "pie": "Structure: pie title ChartTitle, then \"Label\" : value per line",
-        "mindmap": "Structure: root((CenterTopic)), indent branches with spaces",
+        "dot": "Start with digraph G {. Nodes: A [label=\"text\"]; Edges: A -> B [label=\"action\"]; Subgraphs: subgraph cluster_Name { label=\"Title\"; ... }",
+        "fdp": "Start with graph ER {. Nodes: A [label=\"text\" shape=record]; Edges: A -- B [label=\"rel\"]; Use layout=fdp;",
+        "twopi": "Start with digraph G {. Use layout=twopi; root=center; Center node with shape=ellipse. Branch nodes: center -> branch; Leaf nodes: branch -> leaf;",
     }
-    return hints.get(diagram_type, hints["flowchart TD"])
+    return hints.get(layout_engine, hints["dot"])
 
 
-def _wrap_partial_mermaid(raw_output: str, diagram_type: str) -> str:
+def _wrap_partial_dot(raw_output: str, layout_engine: str) -> str:
     """
-    When we pre-seed '```mermaid\\n' in the prompt, the model outputs
-    the diagram body directly. This wraps it back into a proper fenced block.
+    When we pre-seed 'digraph G {' in the prompt, the model outputs
+    the body directly. This wraps it back into a proper DOT string.
     """
     text = raw_output.strip()
 
-    # If it already has proper fences, leave it alone
-    if text.startswith("```mermaid"):
+    # If it already has a digraph/graph wrapper, leave it alone
+    if re.match(r'^(strict\s+)?(di)?graph\b', text, re.I):
         return text
 
-    # Strip any trailing ``` the model might have added
+    # Strip any fences the model might have added
+    if text.startswith("```"):
+        # Remove opening fence
+        text = re.sub(r'^```(?:dot|graphviz)?\s*\n?', '', text)
     if text.endswith("```"):
         text = text[:-3].strip()
 
-    # Strip any leading ``` the model might have re-added
-    if text.startswith("```"):
-        text = text[3:].strip()
-        if text.lower().startswith("mermaid"):
-            text = text[7:].strip()
+    # If the model included digraph G { after stripping, return as-is
+    if re.match(r'^(strict\s+)?(di)?graph\b', text, re.I):
+        return text
 
-    # If the model didn't include the diagram type keyword, prepend it
-    has_type = any(
-        text.lower().startswith(t.lower())
-        for t in [
-            "flowchart", "graph ", "sequenceDiagram", "erDiagram",
-            "classDiagram", "stateDiagram", "gantt", "pie", "mindmap",
-        ]
-    )
-    if not has_type and text:
-        text = diagram_type + "\n" + text
-
-    return "```mermaid\n" + text + "\n```"
+    # Wrap in digraph
+    if layout_engine == "fdp":
+        return f"graph G {{\n    layout=fdp;\n{text}\n}}"
+    else:
+        return f"digraph G {{\n{text}\n}}"
 
 
 # ── Generate ───────────────────────────────────────────────────────────────────
 
 
 def generate(
-    prompt: str, mode: str, context: str = "", diagram_type: str = "flowchart TD", confidence: float = 1.0
+    prompt: str, mode: str, context: str = "", diagram_type: str = "dot", confidence: float = 1.0
 ) -> str:
     llm = load_model()
 
     # ── Diagram ───────────────────────────────────────────────────────────────
     if mode == "diagram":
-        type_hint = _get_diagram_type_hint(diagram_type)
+        layout_engine = diagram_type  # now a DOT layout engine string
+        type_hint = _get_diagram_type_hint(layout_engine)
         stops = _stop_tokens()
 
         # ── System prompt: short & direct (small models work better with less)
         diagram_sys = (
-            "You generate Mermaid diagrams. Output ONLY the diagram nodes and edges.\n"
+            "Output only valid Graphviz DOT code. Start with `digraph G {`. "
+            "Use `rankdir`, `node [shape=box]`, and `edge` attributes. "
+            "Use `fontname=\"Arial\"` and `fontsize=12` for nodes, `fontsize=11` for edges. "
+            "No markdown fences. No explanation text. No commentary.\n"
             "RULES: Every node label MUST be specific to the user's topic.\n"
             "BANNED labels: Start, End, Process, Decision, Action, Step, Node, Other.\n"
             f"Syntax: {type_hint}"
@@ -992,18 +990,19 @@ def generate(
             context = context[:3000]
             user_msg = (
                 f"DOCUMENT:\n{context}\n\n"
-                f"Create a {diagram_type} diagram about: {prompt}\n"
+                f"Create a DOT digraph about: {prompt}\n"
                 f"Use ONLY real terms from the document. 8+ nodes minimum."
             )
         else:
-            user_msg = (
-                f"Create a detailed {diagram_type} diagram about: {prompt}\n"
-                f"Include 10+ nodes with SPECIFIC labels about this exact topic.\n"
-                f"Use subgraphs to organize different sections."
-            )
+            # Look up diagram-type-specific prompt
+            prompt_key = layout_engine
+            # Map internal keys to DIAGRAM_PROMPTS keys
+            if prompt_key not in DIAGRAM_PROMPTS:
+                prompt_key = "dot"  # default fallback
+            user_msg = DIAGRAM_PROMPTS.get(prompt_key, DIAGRAM_PROMPTS["dot"]) + f" {prompt}"
 
-        # Pre-seed: model just needs to output nodes/edges, not boilerplate
-        prefix = f"```mermaid\n{diagram_type}\n"
+        # Pre-seed: model outputs DOT body directly
+        prefix = "digraph G {\n"
         full_prompt = _build_prompt(diagram_sys, user_msg, prefix)
 
         temp = 0.2
@@ -1012,13 +1011,15 @@ def generate(
         def _generate_once(t):
             r = llm(full_prompt, max_tokens=max_tokens, temperature=t, stop=stops, echo=False)
             body = r["choices"][0]["text"].strip()
-            # Remove any repeated diagram header the model might echo
-            for hdr in ["```mermaid", "```", diagram_type]:
-                if body.lower().startswith(hdr.lower()):
-                    body = body[len(hdr):].strip()
-            # Build full diagram
-            full = f"```mermaid\n{diagram_type}\n{body}\n```"
-            return process_diagram(full, diagram_type)
+            # Remove any repeated digraph header the model might echo
+            if body.lower().startswith("digraph"):
+                pass  # keep it, process_diagram will handle
+            # Build full DOT
+            full = f"digraph G {{\n{body}"
+            # Ensure closing brace
+            if full.count("{") > full.count("}"):
+                full += "\n}" * (full.count("{") - full.count("}"))
+            return process_diagram(full, layout_engine)
 
         processed = _generate_once(temp)
         score = complexity_score(processed)
