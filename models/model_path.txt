@@ -1,1 +1,1 @@
-C:\usb\usb_llm\models\Qwen2.5-3B.Q6_K.gguf
+C:\usb\usb_llm\models\DeepSeek-R1-q4_k_m.gguf

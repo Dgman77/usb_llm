@@ -359,16 +359,7 @@ else
 skip "Embedding model already exists"
 fi
 
-RERANK_MODEL="$MODELS/bge-reranker-v2-m3-Q8_0.gguf"
-
-if [[ ! -f "$RERANK_MODEL" ]]; then
-echo "Downloading reranker model..."
-download 
-"https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q8_0.gguf" 
-"$RERANK_MODEL"
-else
-skip "Reranker model already exists"
-fi
+# Reranker model download removed to optimize for low-spec CPU environments.
 
 # ------------------------------------------------------------
 

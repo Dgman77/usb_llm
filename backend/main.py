@@ -7,6 +7,7 @@ on any drive letter (D: E: G: etc.)
 
 import os
 import sys
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -46,11 +47,11 @@ async def lifespan(app: FastAPI):
     print("Storage ready: data/uploads | data/images | data/exports | data/diagrams")
     
     try:
-        # FIX-1: Load all 3 resident models
+        # Load resident models (embedding + active chat model)
         from llm import load_all_models
         load_all_models()
         
-        # FIX-4: Load persisted FAISS index
+        # Load persisted FAISS index & metadata
         from rag import load_persisted_index
         load_persisted_index()
         
@@ -64,10 +65,9 @@ async def lifespan(app: FastAPI):
     yield
     print("[Server] Stopping...")
     try:
-        from llm import unload_chat_model, unload_embed_model, unload_reranker
+        from llm import unload_chat_model, unload_embed_model
         unload_chat_model()
         unload_embed_model()
-        unload_reranker()
     except Exception as e:
         print(f"[Server] Error during shutdown unloads: {e}")
     print("[Server] Stopped.")

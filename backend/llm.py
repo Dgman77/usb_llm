@@ -1,15 +1,16 @@
 """
 llm.py — AI model loader and diagram/QA generator.
 
-Improvements applied:
-  1. Smarter prompt: concrete Graphviz DOT examples per diagram type
-  2. Output validator: checks DOT syntax, retries once if invalid
-  3. Diagram type routing: uses correct DOT layout engine
+Optimized for low-spec CPU environments:
+  1. No Reranker: Removed to save ~636MB memory swapping/loading overhead.
+  2. Persistent Embeddings: nomic-embed-text stays loaded in RAM.
+  3. Simplified RAM budget.
 """
 
 import os
 import glob
 import re
+import gc
 from llama_cpp import Llama
 from diagram_engine import process_diagram, is_valid as is_valid_diagram, complexity_score
 
@@ -19,20 +20,16 @@ MODELS_DIR = os.path.join(USB_ROOT, "models")
 
 # ── Model finder ───────────────────────────────────────────────────────────────
 
-import gc
-
 def _sanitize_path(raw: str) -> str:
     """Clean up path strings that may have escaped backslashes."""
-    # Fix double-escaped backslashes (\\\\) → single backslash
     cleaned = raw.strip().strip('"').strip("'").strip()
     cleaned = cleaned.replace('\\\\', '\\')
-    cleaned = cleaned.replace('\\\\', '\\')  # second pass for quad-escaped
+    cleaned = cleaned.replace('\\\\', '\\')  # second pass
     return cleaned
 
 
 def _prefer_quantized(files: list) -> list:
-    """Sort model files to prefer smaller quantized models (Q4 > Q5 > Q6 > Q8 > FP16).
-    This ensures 8GB RAM systems load the smallest workable model first."""
+    """Sort model files to prefer smaller quantized models (Q4 > Q5 > Q6 > Q8 > FP16)."""
     def _quant_priority(path):
         name = os.path.basename(path).lower()
         if 'q4_' in name or 'q4-' in name: return 0
@@ -135,15 +132,6 @@ def switch_model(path: str) -> dict:
     can_load, strategy, estimated_ram = check_ram_budget(path)
     chat_size = get_gguf_size_gb(path)
 
-    if strategy == "too_large":
-        return {
-            "success": False,
-            "error": "Model too large for 8GB RAM.",
-            "model_size_gb": round(chat_size, 2),
-            "estimated_total_gb": round(estimated_ram, 2),
-            "recommendation": "Use a Q4 quantized model under 4GB for best performance."
-        }
-
     # Save new path to file
     path_file = os.path.join(MODELS_DIR, "model_path.txt")
     os.makedirs(MODELS_DIR, exist_ok=True)
@@ -152,38 +140,14 @@ def switch_model(path: str) -> dict:
 
     CURRENT_STRATEGY = strategy
 
-    if strategy == "all_resident":
-        unload_chat_model()
-        gc.collect()
-        load_chat_model()
-        try:
-            get_embed_model()
-        except Exception:
-            pass
-        try:
-            get_reranker_model()
-        except Exception:
-            pass
-        print(f"Chat switched. All 3 models resident. RAM: {estimated_ram:.1f}GB")
-
-    elif strategy == "drop_reranker":
-        unload_chat_model()
-        unload_reranker()
-        gc.collect()
-        load_chat_model()
-        try:
-            get_embed_model()
-        except Exception:
-            pass
-        print(f"Chat switched. Reranker will hot-swap (model too large for 3 resident). RAM: {estimated_ram:.1f}GB")
-
-    elif strategy == "chat_only":
-        unload_chat_model()
-        unload_embed_model()
-        unload_reranker()
-        gc.collect()
-        load_chat_model()
-        print(f"Chat switched. Embed + reranker will hot-swap (large model loaded). RAM: {estimated_ram:.1f}GB")
+    unload_chat_model()
+    gc.collect()
+    load_chat_model()
+    try:
+        get_embed_model()
+    except Exception:
+        pass
+    print(f"Chat switched. Chat and embed models resident. RAM: {estimated_ram:.1f}GB")
 
     return {
         "success": True,
@@ -213,7 +177,6 @@ def user_wants_doc_search(message: str) -> bool:
 MAX_RAM_GB = 7.5
 SYSTEM_OVERHEAD_GB = 2.35
 EMBED_SIZE_GB = 0.14
-RERANKER_SIZE_GB = 0.61
 LLM_CTX_WINDOW = 4096
 
 _chat_model = None
@@ -228,7 +191,7 @@ _llm = None
 _llm_path = None
 _model_type = None
 
-# Default strategy (updated on model switcher route)
+# Default strategy
 CURRENT_STRATEGY = "all_resident"
 
 
@@ -245,41 +208,13 @@ def get_gguf_size_gb(model_path):
 
 def check_ram_budget(chat_model_path,
                       embed_resident=True,
-                      reranker_resident=True):
+                      reranker_resident=False):
     """
     Returns (can_load, strategy, estimated_ram)
-
-    Strategy options:
-      "all_resident"     → all 3 models in RAM
-      "drop_reranker"    → unload reranker to fit
-      "drop_embed"       → unload embed to fit
-      "chat_only"        → only chat fits, swap
-                           embed/reranker per query
-      "too_large"        → model too big even alone
     """
     chat_size = get_gguf_size_gb(chat_model_path)
-    base = SYSTEM_OVERHEAD_GB + chat_size
-
-    if embed_resident:
-        base += EMBED_SIZE_GB
-    if reranker_resident:
-        base += RERANKER_SIZE_GB
-
-    if base <= MAX_RAM_GB:
-        return True, "all_resident", base
-
-    # try without reranker
-    base_no_reranker = (SYSTEM_OVERHEAD_GB +
-                        chat_size + EMBED_SIZE_GB)
-    if base_no_reranker <= MAX_RAM_GB:
-        return True, "drop_reranker", base_no_reranker
-
-    # try without embed + reranker
-    base_chat_only = SYSTEM_OVERHEAD_GB + chat_size
-    if base_chat_only <= MAX_RAM_GB:
-        return True, "chat_only", base_chat_only
-
-    return False, "too_large", base_chat_only
+    base = SYSTEM_OVERHEAD_GB + chat_size + EMBED_SIZE_GB
+    return True, "all_resident", base
 
 
 def unload_chat_model():
@@ -295,29 +230,16 @@ def unload_chat_model():
 
 
 def unload_embed_model():
-    global _embed_model, _embed_model_path
-    if _embed_model is not None:
-        print(f"[LLM] Unloading embed model: {_embed_model_path}")
-        _embed_model = None
-        _embed_model_path = None
-        gc.collect()
+    # Keep embedding model resident as a core RAG component
+    pass
 
 
 def unload_reranker():
-    global _reranker_model, _reranker_model_path
-    if _reranker_model is not None:
-        print(f"[LLM] Unloading reranker: {_reranker_model_path}")
-        _reranker_model = None
-        _reranker_model_path = None
-        gc.collect()
+    pass
 
 
 def unload_model():
-    # Deprecated/compatible wrapper for query pipeline
-    # Only unloads if the strategy requires hot-swapping
-    if CURRENT_STRATEGY == "chat_only":
-        unload_embed_model()
-        unload_reranker()
+    pass
 
 
 def get_chat_model():
@@ -337,10 +259,6 @@ def get_embed_model():
     if _embed_model is not None and _embed_model_path == embed_path:
         return _embed_model
 
-    # If chat_only strategy, we might need to free other models
-    if CURRENT_STRATEGY == "chat_only":
-        unload_reranker()
-
     print(f"[LLM] Loading embedding model: {os.path.basename(embed_path)}")
     try:
         _embed_model = Llama(
@@ -358,36 +276,8 @@ def get_embed_model():
 
 
 def get_reranker_model():
-    global _reranker_model, _reranker_model_path
-    reranker_path = None
-    hits = glob.glob(os.path.join(MODELS_DIR, "*rerank*.gguf"))
-    if hits:
-        reranker_path = hits[0]
-    if reranker_path is None or not os.path.exists(reranker_path):
-        return None
-
-    if _reranker_model is not None and _reranker_model_path == reranker_path:
-        return _reranker_model
-
-    # If needed, unload models for memory room
-    if CURRENT_STRATEGY in ("drop_reranker", "chat_only"):
-        unload_embed_model()
-
-    print(f"[LLM] Loading reranker model: {os.path.basename(reranker_path)}")
-    try:
-        _reranker_model = Llama(
-            model_path=reranker_path,
-            embedding=True,
-            n_ctx=512,
-            n_threads=max(2, (os.cpu_count() or 4) // 2),
-            verbose=False,
-        )
-        _reranker_model_path = reranker_path
-    except Exception as e:
-        print(f"[LLM] Reranker load failed: {e} — will use FAISS scores")
-        _reranker_model = None
-        _reranker_model_path = None
-    return _reranker_model
+    # Deprecated for low spec optimizations
+    return None
 
 
 def load_chat_model():
@@ -432,7 +322,7 @@ def load_model():
 
 
 def load_all_models():
-    """Server start -> load ALL 3 models -> ALL stay in RAM"""
+    """Server start -> load chat + embed models -> stay in RAM"""
     print("[LLM] Initializing resident models...")
     chat_path = find_model()
     chat_size = get_gguf_size_gb(chat_path)
@@ -446,19 +336,11 @@ def load_all_models():
     print(f"Loading chat model... {chat_size:.2f}GB")
     load_chat_model()
 
-    if strategy in ("all_resident", "drop_reranker"):
-        print("Loading embed model... 0.14GB")
-        try:
-            load_embed_model()
-        except Exception as e:
-            print(f"[LLM] WARNING: Failed to load embed model: {e}")
-
-    if strategy == "all_resident":
-        print("Loading reranker... 0.61GB")
-        try:
-            load_reranker_model()
-        except Exception as e:
-            print(f"[LLM] WARNING: Failed to load reranker model: {e}")
+    print("Loading embed model... 0.14GB")
+    try:
+        get_embed_model()
+    except Exception as e:
+        print(f"[LLM] WARNING: Failed to load embed model: {e}")
 
     print(f"Total model RAM: {estimated_ram:.2f}GB — OK")
     print(f"All models loaded. RAM usage: ~{estimated_ram:.1f}GB")
@@ -613,10 +495,10 @@ Example — hospital system:
 graph ER {
     layout=fdp;
     node [shape=record, style=filled, fillcolor="#faf6ee"];
-    Patient [label="{Patient|patient_id : int PK\lfull_name : string\ldate_of_birth : date\lblood_type : string\l}"];
-    Doctor [label="{Doctor|doctor_id : int PK\lfull_name : string\lspecialization : string\ldepartment_id : int FK\l}"];
-    Appointment [label="{Appointment|appt_id : int PK\lpatient_id : int FK\ldoctor_id : int FK\lscheduled_at : datetime\lstatus : string\l}"];
-    Department [label="{Department|dept_id : int PK\lname : string\lfloor : int\l}"];
+    Patient [label="{Patient|patient_id : int PK\\lfull_name : string\\ldate_of_birth : date\\lblood_type : string\\l}"];
+    Doctor [label="{Doctor|doctor_id : int PK\\lfull_name : string\\lspecialization : string\\ldepartment_id : int FK\\l}"];
+    Appointment [label="{Appointment|appt_id : int PK\\lpatient_id : int FK\\ldoctor_id : int FK\\lscheduled_at : datetime\\lstatus : string\\l}"];
+    Department [label="{Department|dept_id : int PK\\lname : string\\lfloor : int\\l}"];
     Patient -- Appointment [label="books"];
     Doctor -- Appointment [label="attends"];
     Department -- Doctor [label="employs"];
@@ -634,10 +516,10 @@ Example — online store:
 digraph G {
     rankdir=BT;
     node [shape=record, style=filled, fillcolor="#faf6ee"];
-    Product [label="{Product|+productId : int\l+name : String\l+price : float\l|+getDiscountedPrice()\l}"];
-    PhysicalProduct [label="{PhysicalProduct|+weight : float\l|+calculateShipping()\l}"];
-    DigitalProduct [label="{DigitalProduct|+downloadUrl : String\l|+generateLicense()\l}"];
-    ShoppingCart [label="{ShoppingCart|+items : List\l|+addItem()\l+calculateTotal()\l}"];
+    Product [label="{Product|+productId : int\\l+name : String\\l+price : float\\l|+getDiscountedPrice()\\l}"];
+    PhysicalProduct [label="{PhysicalProduct|+weight : float\\l|+calculateShipping()\\l}"];
+    DigitalProduct [label="{DigitalProduct|+downloadUrl : String\\l|+generateLicense()\\l}"];
+    ShoppingCart [label="{ShoppingCart|+items : List\\l|+addItem()\\l+calculateTotal()\\l}"];
     PhysicalProduct -> Product [arrowhead=empty];
     DigitalProduct -> Product [arrowhead=empty];
     ShoppingCart -> Product [arrowhead=diamond, label="contains"];
@@ -680,7 +562,7 @@ Now generate a DETAILED state DOT diagram with SPECIFIC states for:""",
 
 CRITICAL RULES:
 - Use rankdir=LR for timeline flow
-- Use SPECIFIC task names from the topic
+- Use SPECIFIC task tasks from the topic
 - Group into subgraph clusters by phase
 - Include at LEAST 8 tasks across 3+ phases
 
@@ -690,22 +572,22 @@ digraph G {
     node [shape=box, style="filled,rounded", fillcolor="#faf6ee"];
     subgraph cluster_Research {
         label="Research";
-        A [label="User interviews\n14 days"];
-        B [label="Competitor analysis\n7 days"];
+        A [label="User interviews\\n14 days"];
+        B [label="Competitor analysis\\n7 days"];
         A -> B;
     }
     subgraph cluster_Design {
         label="Design";
-        C [label="Wireframes\n10 days"];
-        D [label="UI mockups\n10 days"];
-        E [label="Usability testing\n5 days"];
+        C [label="Wireframes\\n10 days"];
+        D [label="UI mockups\\n10 days"];
+        E [label="Usability testing\\n5 days"];
         C -> D -> E;
     }
     subgraph cluster_Dev {
         label="Development";
-        F [label="Backend API\n21 days"];
-        G [label="iOS frontend\n28 days"];
-        H [label="Android frontend\n28 days"];
+        F [label="Backend API\\n21 days"];
+        G [label="iOS frontend\\n28 days"];
+        H [label="Android frontend\\n28 days"];
     }
     B -> C;
     E -> F;
@@ -729,12 +611,12 @@ digraph G {
     labelloc=t;
     fontsize=16;
     node [shape=box, style="filled,rounded"];
-    A [label="Compute (EC2/VMs)\n35%" fillcolor="#f59e0b"];
-    B [label="Storage (S3/Blob)\n20%" fillcolor="#14b8a6"];
-    C [label="Networking (CDN)\n15%" fillcolor="#6366f1"];
-    D [label="Database (RDS)\n18%" fillcolor="#f43f5e"];
-    E [label="Monitoring\n7%" fillcolor="#10b981"];
-    F [label="Other services\n5%" fillcolor="#8b5cf6"];
+    A [label="Compute (EC2/VMs)\\n35%" fillcolor="#f59e0b"];
+    B [label="Storage (S3/Blob)\\n20%" fillcolor="#14b8a6"];
+    C [label="Networking (CDN)\\n15%" fillcolor="#6366f1"];
+    D [label="Database (RDS)\\n18%" fillcolor="#f43f5e"];
+    E [label="Monitoring\\n7%" fillcolor="#10b981"];
+    F [label="Other services\\n5%" fillcolor="#8b5cf6"];
     Center [label="Total Budget" shape=ellipse, style="filled", fillcolor="#fdf8f0"];
     Center -> A;
     Center -> B;
@@ -749,7 +631,7 @@ Now generate a DETAILED distribution DOT diagram with SPECIFIC labels for:""",
 CRITICAL RULES:
 - Root node MUST be the SPECIFIC topic (use ellipse shape)
 - Every branch and leaf MUST have SPECIFIC, REAL content
-- NEVER use generic labels like "Topic", "Subtopic", "Item"
+- Central node must represent the query topic
 - Include at LEAST 4 branches with 2-3 leaves each
 
 Example — machine learning:
@@ -1082,8 +964,3 @@ def generate_hyde_passage(query: str) -> str:
     prompt = _build_prompt(system, user)
     res = llm(prompt, max_tokens=150, temperature=0.3, stop=stops, echo=False)
     return res["choices"][0]["text"].strip()
-
-
-# LLM-based chunk scoring removed — too slow for
-# 8GB RAM. CRAG heuristic in crag.py handles this.
-

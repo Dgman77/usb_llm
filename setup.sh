@@ -455,18 +455,7 @@ create_models_dir() {
         echo -e "[${CYAN}SKIP${RESET}] Embedding model already exists."
     fi
 
-    # Download Reranker Model
-    if [[ ! -f "$ROOT/models/bge-reranker-v2-m3-Q8_0.gguf" ]]; then
-        echo "Downloading reranker model: bge-reranker-v2-m3-Q8_0.gguf (~570MB) ..."
-        download "https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q8_0.gguf" "$ROOT/models/bge-reranker-v2-m3-Q8_0.gguf"
-        if [[ -f "$ROOT/models/bge-reranker-v2-m3-Q8_0.gguf" ]]; then
-            echo -e "[${GREEN}OK${RESET}] Reranker model downloaded."
-        else
-            echo -e "[${YELLOW}WARNING${RESET}] Failed to download reranker model."
-        fi
-    else
-        echo -e "[${CYAN}SKIP${RESET}] Reranker model already exists."
-    fi
+    # Reranker model download removed to optimize for low-spec CPU environments and prevent disk swapping.
 }
 
 # ─────────────────────────────────────────────────────────────

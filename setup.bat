@@ -5,20 +5,21 @@ color 0A
 
 :: ─────────────────────────────────────────────────────────────
 :: ROOT PATH  (strip trailing backslash -- works on any drive/PC)
+:: Quotes added so paths with spaces never break variable expansion
 :: ─────────────────────────────────────────────────────────────
-SET ROOT=%~dp0
-IF "%ROOT:~-1%"=="\" SET ROOT=%ROOT:~0,-1%
+SET "ROOT=%~dp0"
+IF "%ROOT:~-1%"=="\" SET "ROOT=%ROOT:~0,-1%"
 
-SET PY=%ROOT%\python\python.exe
-SET PY_DIR=%ROOT%\python
-SET SITE=%ROOT%\python\Lib\site-packages
-SET SCRIPTS=%ROOT%\python\Scripts
-SET WHEELS=%ROOT%\wheels
+SET "PY=%ROOT%\python\python.exe"
+SET "PY_DIR=%ROOT%\python"
+SET "SITE=%ROOT%\python\Lib\site-packages"
+SET "SCRIPTS=%ROOT%\python\Scripts"
+SET "WHEELS=%ROOT%\wheels"
 
-SET PYTHONHOME=%PY_DIR%
+SET "PYTHONHOME=%PY_DIR%"
 SET PYTHONNOUSERSITE=1
 SET PYTHONPATH=
-SET PATH=%PY_DIR%;%SCRIPTS%;%SystemRoot%\system32;%SystemRoot%
+SET "PATH=%PY_DIR%;%SCRIPTS%;%SystemRoot%\system32;%SystemRoot%"
 
 echo.
 echo ============================================================
@@ -128,6 +129,17 @@ IF EXIST "%PY%" (
     echo [SKIP] Python already installed at:
     echo        %PY%
     echo.
+
+    :: FIX 1: .pth fix must also run when Python is already present.
+    :: Original only ran it on fresh install -- skipping it caused pip to fail.
+    :: FIX 2: Pure Python handles the path (no PowerShell, no findstr).
+    ::         Path passed as sys.argv[1] so backslashes are never a quoting issue.
+    SET "PTH=%PY_DIR%\python311._pth"
+    IF EXIST "!PTH!" (
+        "%PY%" -c "import sys; p=sys.argv[1]; c=open(p).read(); open(p,'w').write(c.replace('#import site','import site'))" "!PTH!"
+        echo [OK] site-packages enabled in python311._pth
+    )
+    echo.
     goto :pip_check
 )
 
@@ -156,13 +168,12 @@ IF NOT EXIST "%PY%" (
 )
 echo [OK] Python 3.11.9 extracted
 
-:: Enable site-packages in embedded Python
-SET PTH=%PY_DIR%\python311._pth
-powershell -Command "& { (Get-Content '%PTH%') -replace '#import site','import site' | Set-Content '%PTH%' }" >nul 2>&1
-IF ERRORLEVEL 1 (
-    "%PY%" -c "f=open(r'%PTH%');c=f.read();f.close();f=open(r'%PTH%','w');f.write(c.replace('#import site','import site'));f.close()"
+:: FIX 2: Pure Python for .pth edit -- no PowerShell, no findstr quoting issues
+SET "PTH=%PY_DIR%\python311._pth"
+IF EXIST "%PTH%" (
+    "%PY%" -c "import sys; p=sys.argv[1]; c=open(p).read(); open(p,'w').write(c.replace('#import site','import site'))" "%PTH%"
+    echo [OK] site-packages enabled in python311._pth
 )
-echo [OK] site-packages enabled
 echo.
 
 :: ─────────────────────────────────────────────────────────────
@@ -173,6 +184,11 @@ echo ============================================================
 echo   pip Check
 echo ============================================================
 echo.
+
+:: FIX 3: Create site-packages folder BEFORE pip bootstrap runs.
+:: Embedded Python does not ship with this folder -- pip fails with
+:: [Errno 2] No such file or directory if it doesn't exist yet.
+IF NOT EXIST "%SITE%" mkdir "%SITE%"
 
 "%PY%" -m pip --version >nul 2>&1
 IF NOT ERRORLEVEL 1 (
@@ -189,12 +205,13 @@ IF NOT EXIST "%GETPIP%" (
     pause & exit /b 1
 )
 "%PY%" "%GETPIP%" --quiet
-IF ERRORLEVEL 1 (
+SET _PIPERR=%ERRORLEVEL%
+del "%GETPIP%" >nul 2>&1
+
+IF %_PIPERR% NEQ 0 (
     echo [ERROR] pip bootstrap failed.
-    del "%GETPIP%" >nul 2>&1
     pause & exit /b 1
 )
-del "%GETPIP%" >nul 2>&1
 "%PY%" -m pip install --upgrade pip --quiet
 echo [OK] pip installed
 echo.
@@ -472,8 +489,6 @@ IF ERRORLEVEL 1 ( echo   [FAIL] numpy             & SET /A V_FAIL+=1 ) ELSE ( ec
 "%PY%" -c "import pydantic" >nul 2>&1
 IF ERRORLEVEL 1 ( echo   [FAIL] pydantic          & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] pydantic )
 
-
-
 "%PY%" -c "import docx" >nul 2>&1
 IF ERRORLEVEL 1 ( echo   [FAIL] python-docx       & SET /A V_FAIL+=1 ) ELSE ( echo   [ OK ] python-docx )
 
@@ -502,28 +517,20 @@ IF NOT EXIST "%ROOT%\models" (
 IF NOT EXIST "%ROOT%\models\nomic-embed-text-v1.5.Q8_0.gguf" (
     echo Downloading embedding model: nomic-embed-text-v1.5.Q8_0.gguf 137MB ...
     call :download "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf" "%ROOT%\models\nomic-embed-text-v1.5.Q8_0.gguf"
+    IF NOT EXIST "%ROOT%\models\nomic-embed-text-v1.5.Q8_0.gguf" (
+        echo [RETRY] HF slow -- trying hf-mirror.com ...
+        call :download "https://hf-mirror.com/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf" "%ROOT%\models\nomic-embed-text-v1.5.Q8_0.gguf"
+    )
     IF EXIST "%ROOT%\models\nomic-embed-text-v1.5.Q8_0.gguf" (
         echo [OK] Embedding model downloaded.
     ) ELSE (
-        echo [WARNING] Failed to download embedding model.
+        echo [WARNING] Failed to download embedding model. Download manually and place in models\
     )
 ) ELSE (
     echo [SKIP] Embedding model already exists.
 )
 
-:: Download Reranker Model
-IF NOT EXIST "%ROOT%\models\bge-reranker-v2-m3-Q8_0.gguf" (
-    echo Downloading reranker model: bge-reranker-v2-m3-Q8_0.gguf 570MB ...
-    call :download "https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q8_0.gguf" "%ROOT%\models\bge-reranker-v2-m3-Q8_0.gguf"
-    IF EXIST "%ROOT%\models\bge-reranker-v2-m3-Q8_0.gguf" (
-        echo [OK] Reranker model downloaded.
-    ) ELSE (
-        echo [WARNING] Failed to download reranker model.
-    )
-) ELSE (
-    echo [SKIP] Reranker model already exists.
-)
-
+:: Reranker model download removed to optimize for low-spec CPU environments and prevent disk swapping.
 :: ─────────────────────────────────────────────────────────────
 :done
 echo.

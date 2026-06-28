@@ -2,9 +2,11 @@
 rag.py — Dense RAG with multi-format + image support
 Supports: PDF, DOCX, TXT, CSV, XLSX, PPTX, HTML, MD, JSON, XML, RTF, Images
 
-# Search: Dense vector search via FAISS IndexFlatIP
-# with cosine similarity (L2 normalisation).
-# BM25 sparse search not implemented — dense only.
+Search: Dense vector search via FAISS IndexFlatIP
+        with cosine similarity (L2 normalisation).
+
+Persistence: SQLite metadata.db (Python built-in sqlite3, zero extra deps).
+             Eliminates chunks_meta.json write amplification on USB drives.
 """
 
 import os
@@ -13,6 +15,7 @@ import io
 import csv
 import json
 import base64
+import sqlite3
 import html as html_mod
 import xml.etree.ElementTree as ET
 import numpy as np
@@ -60,9 +63,113 @@ _chunk_doc = []
 _chunk_page = []
 _chunk_type = []        # "text" | "image_meta"
 _doc_names = []
-_embeddings = []        # list of list of floats
 _images = {}            # doc_name → [{data, ext, page, desc}, ...]
 _faiss_index = None
+
+# NOTE: _embeddings list removed — embeddings live in FAISS index only.
+# This reduces in-memory overhead significantly on low-spec devices.
+
+# USB-safe root path for persistence
+USB_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DB_PATH = os.path.join(USB_ROOT, "metadata.db")
+_INDEX_PATH = os.path.join(USB_ROOT, "index.faiss")
+
+
+# ── SQLite helpers ────────────────────────────────────────
+
+def _get_db() -> sqlite3.Connection:
+    """Open (or create) the metadata SQLite database."""
+    conn = sqlite3.connect(_DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")   # Write-Ahead Log — safer on USB
+    conn.execute("PRAGMA synchronous=NORMAL") # Balance safety / write speed
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chunks (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            text        TEXT    NOT NULL,
+            parent_text TEXT    NOT NULL,
+            doc         TEXT    NOT NULL,
+            page        INTEGER NOT NULL DEFAULT 1,
+            chunk_type  TEXT    NOT NULL DEFAULT 'text'
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS doc_names (
+            name TEXT PRIMARY KEY
+        )
+    """)
+    conn.commit()
+    return conn
+
+
+def _load_metadata_from_db():
+    """Load chunk metadata from SQLite into memory lists."""
+    global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names
+    _chunks.clear()
+    _parent_chunks.clear()
+    _chunk_doc.clear()
+    _chunk_page.clear()
+    _chunk_type.clear()
+    _doc_names.clear()
+
+    try:
+        conn = _get_db()
+        rows = conn.execute(
+            "SELECT text, parent_text, doc, page, chunk_type FROM chunks ORDER BY id"
+        ).fetchall()
+        for text, parent_text, doc, page, chunk_type in rows:
+            _chunks.append(text)
+            _parent_chunks.append(parent_text)
+            _chunk_doc.append(doc)
+            _chunk_page.append(page)
+            _chunk_type.append(chunk_type)
+
+        doc_rows = conn.execute("SELECT name FROM doc_names").fetchall()
+        _doc_names.extend(row[0] for row in doc_rows)
+        conn.close()
+        print(f"[RAG] Loaded {len(_chunks)} chunks from metadata.db")
+    except Exception as e:
+        print(f"[RAG] WARNING: Failed to load metadata from db: {e}")
+
+
+def _save_chunks_to_db(new_chunks, new_parents, new_docs, new_pages, new_types, doc_name):
+    """Append new chunk rows and register the document name in SQLite."""
+    try:
+        conn = _get_db()
+        conn.executemany(
+            "INSERT INTO chunks (text, parent_text, doc, page, chunk_type) VALUES (?,?,?,?,?)",
+            zip(new_chunks, new_parents, new_docs, new_pages, new_types),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO doc_names (name) VALUES (?)", (doc_name,)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[RAG] WARNING: Failed to save chunks to db: {e}")
+
+
+def _delete_doc_from_db(filename: str):
+    """Remove all rows for a document from the SQLite database."""
+    try:
+        conn = _get_db()
+        conn.execute("DELETE FROM chunks WHERE doc = ?", (filename,))
+        conn.execute("DELETE FROM doc_names WHERE name = ?", (filename,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[RAG] WARNING: Failed to delete doc from db: {e}")
+
+
+def _clear_db():
+    """Drop all rows from both tables."""
+    try:
+        conn = _get_db()
+        conn.execute("DELETE FROM chunks")
+        conn.execute("DELETE FROM doc_names")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[RAG] WARNING: Failed to clear db: {e}")
 
 
 # ── Chunking by Tokens ────────────────────────────────────
@@ -72,7 +179,6 @@ def chunk_text_by_tokens(text: str, model, chunk_size: int, overlap: int) -> lis
         tokens = model.tokenize(text.encode('utf-8', errors='ignore'))
     except Exception as e:
         print(f"[RAG] Tokenizer failed: {e} — falling back to word-based approximation")
-        # Fallback to word-based chunking if model tokenizer fails
         words = text.split()
         chunks = []
         i = 0
@@ -101,23 +207,24 @@ def chunk_text_by_tokens(text: str, model, chunk_size: int, overlap: int) -> lis
 
 
 # ── Build FAISS Index ─────────────────────────────────────
-def _rebuild():
+def _rebuild(embeddings: list):
+    """Rebuild the FAISS index from a list of embedding vectors."""
     global _faiss_index
-    if not _embeddings:
+    if not embeddings:
         _faiss_index = None
         return
 
-    dim = len(_embeddings[0])
-    mat = np.array(_embeddings, dtype="float32")
+    dim = len(embeddings[0])
+    mat = np.array(embeddings, dtype="float32")
 
     # Normalize each vector for Cosine Similarity (via Inner Product Flat index)
     norms = np.linalg.norm(mat, axis=1, keepdims=True)
     norms = np.where(norms == 0, 1.0, norms)
     mat = mat / norms
 
-    _faiss_index = faiss.IndexFlatIP(mat.shape[1])
+    _faiss_index = faiss.IndexFlatIP(dim)
     _faiss_index.add(mat)
-    print(f"[RAG] FAISS Index rebuilt with {len(_embeddings)} chunks (dim={dim})")
+    print(f"[RAG] FAISS Index rebuilt with {len(embeddings)} chunks (dim={dim})")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -192,7 +299,6 @@ def extract_csv(fb: bytes):
     rows = list(reader)
     if not rows:
         return _wrap_pages([])
-    header = rows[0] if rows else []
     buf, pn, pages = "", 1, []
     for row in rows:
         line = " | ".join(row)
@@ -291,7 +397,6 @@ def extract_rtf(fb: bytes):
 def extract_image(fb: bytes, filename: str):
     """Extract metadata (and any text) from an image file."""
     desc_parts = [f"Image file: {filename}"]
-    # Try PIL for dimensions
     if _HAS_PIL:
         try:
             img = Image.open(io.BytesIO(fb))
@@ -300,7 +405,6 @@ def extract_image(fb: bytes, filename: str):
             desc_parts.append(f"Mode: {img.mode}")
         except Exception:
             pass
-    # Try PyMuPDF to extract any embedded text (OCR layer)
     ocr_text = ""
     try:
         ext = os.path.splitext(filename)[1].lstrip(".")
@@ -362,58 +466,55 @@ def get_supported_formats() -> list[str]:
     return fmts
 
 
-# USB-safe root path for persistence
-USB_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# ── Persistence ───────────────────────────────────────────
 
-
-def save_persisted_index():
+def save_persisted_index(embeddings: list):
+    """
+    Save FAISS index to disk.
+    Metadata is already persisted to SQLite incrementally in add_document().
+    Embeddings are only needed for FAISS reconstruction, never stored in Python lists.
+    """
     try:
-        index_path = os.path.join(USB_ROOT, "index.faiss")
-        meta_path = os.path.join(USB_ROOT, "chunks_meta.json")
         if _faiss_index is not None:
-            faiss.write_index(_faiss_index, index_path)
-            metadata = {
-                "chunks": _chunks,
-                "parent_chunks": _parent_chunks,
-                "chunk_doc": _chunk_doc,
-                "chunk_page": _chunk_page,
-                "chunk_type": _chunk_type,
-                "doc_names": _doc_names
-            }
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(metadata, f, indent=2, ensure_ascii=False)
-            print("[RAG] FAISS index and metadata saved to disk.")
+            faiss.write_index(_faiss_index, _INDEX_PATH)
+            print(f"[RAG] FAISS index saved ({_faiss_index.ntotal} vectors)")
     except Exception as e:
-        print(f"[RAG] WARNING: Failed to persist index: {e}")
+        print(f"[RAG] WARNING: Failed to persist FAISS index: {e}")
 
 
 def load_persisted_index():
-    global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names, _embeddings, _faiss_index
-    index_path = os.path.join(USB_ROOT, "index.faiss")
-    meta_path = os.path.join(USB_ROOT, "chunks_meta.json")
-    if os.path.exists(index_path) and os.path.exists(meta_path):
+    """
+    Load FAISS index + chunk metadata from disk on server startup.
+    Embeddings are NOT reconstructed into Python lists — FAISS holds them natively.
+    """
+    global _faiss_index
+    if os.path.exists(_INDEX_PATH) and os.path.exists(_DB_PATH):
         try:
-            print("[RAG] Loading persisted FAISS index and metadata...")
-            _faiss_index = faiss.read_index(index_path)
-            with open(meta_path, "r", encoding="utf-8") as f:
-                metadata = json.load(f)
-            _chunks = metadata["chunks"]
-            _parent_chunks = metadata["parent_chunks"]
-            _chunk_doc = metadata["chunk_doc"]
-            _chunk_page = metadata["chunk_page"]
-            _chunk_type = metadata["chunk_type"]
-            _doc_names = metadata["doc_names"]
-            # Reconstruct embeddings from FAISS
-            _embeddings = [_faiss_index.reconstruct(i).tolist() for i in range(_faiss_index.ntotal)]
+            print("[RAG] Loading persisted FAISS index and SQLite metadata...")
+            _faiss_index = faiss.read_index(_INDEX_PATH)
+            _load_metadata_from_db()
+            # Sanity check: FAISS vector count should match chunk count
+            if _faiss_index.ntotal != len(_chunks):
+                print(
+                    f"[RAG] WARNING: FAISS has {_faiss_index.ntotal} vectors "
+                    f"but DB has {len(_chunks)} chunks — index may be stale."
+                )
             print(f"[RAG] Loaded {len(_chunks)} chunks from disk.")
         except Exception as e:
-            print(f"[RAG] WARNING: Persisted index files corrupted or invalid: {e}. Starting fresh.")
+            print(f"[RAG] WARNING: Persisted index corrupted: {e}. Starting fresh.")
             clear_all()
+    elif os.path.exists(_DB_PATH) and not os.path.exists(_INDEX_PATH):
+        # Metadata exists but FAISS index is missing — load metadata only
+        _load_metadata_from_db()
+        print("[RAG] SQLite metadata loaded but FAISS index missing. "
+              "Re-embedding will rebuild index on next upload.")
+    else:
+        print("[RAG] No persisted index found — starting fresh.")
 
 
 # ── Add Document ──────────────────────────────────────────
 def add_document(file_bytes: bytes, filename: str) -> int:
-    global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names, _embeddings, _faiss_index
+    global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names, _faiss_index
 
     if filename in _doc_names:
         return 0
@@ -424,13 +525,12 @@ def add_document(file_bytes: bytes, filename: str) -> int:
         raise ValueError(f"Unsupported file type: {filename!r}. Supported: {supported}")
 
     result = extractor(file_bytes)
-    # Extractors return either (pages, images) or just pages
     if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], list):
         pages, images = result
     else:
         pages, images = result, []
 
-    from llm import get_embed_model, unload_model
+    from llm import get_embed_model
     embed_model = get_embed_model()
 
     count = 0
@@ -439,19 +539,20 @@ def add_document(file_bytes: bytes, filename: str) -> int:
     new_docs = []
     new_pages = []
     new_types = []
+    new_embeddings = []  # Transient — only used for FAISS rebuild, not stored
 
     # 1. Chunk text by tokens
     for page_num, text in pages:
         if not text.strip():
             continue
-        
+
         # Parent chunking (512 tokens, 50 token overlap)
         parent_texts = chunk_text_by_tokens(text, embed_model, chunk_size=512, overlap=50)
-        
+
         for parent_text in parent_texts:
             # Small chunking (256 tokens, 50 token overlap)
             small_texts = chunk_text_by_tokens(parent_text, embed_model, chunk_size=256, overlap=50)
-            
+
             for small_text in small_texts:
                 if not small_text.strip():
                     continue
@@ -472,93 +573,151 @@ def add_document(file_bytes: bytes, filename: str) -> int:
             new_pages.append(img_info.get("page", 1))
             new_types.append("image_meta")
 
-    # 2. Embed all small chunks, skipping failed ones (FIX-5)
+    # 2. Embed all small chunks (transient — for FAISS index only)
+    accepted_chunks = []
+    accepted_parents = []
+    accepted_docs = []
+    accepted_pages = []
+    accepted_types = []
+
     for i in range(len(new_chunks)):
         chunk = new_chunks[i]
         try:
             res = embed_model.create_embedding(chunk)
             vector = res["data"][0]["embedding"]
-            
-            # Append only if embedding succeeds
-            _chunks.append(chunk)
-            _parent_chunks.append(new_parents[i])
-            _chunk_doc.append(new_docs[i])
-            _chunk_page.append(new_pages[i])
-            _chunk_type.append(new_types[i])
-            _embeddings.append(vector)
+
+            accepted_chunks.append(chunk)
+            accepted_parents.append(new_parents[i])
+            accepted_docs.append(new_docs[i])
+            accepted_pages.append(new_pages[i])
+            accepted_types.append(new_types[i])
+            new_embeddings.append(vector)
             count += 1
         except Exception as e:
             print(f"WARNING: Skipping chunk {i} — embed failed: {chunk[:50]}")
 
+    # 3. Append to in-memory lists
+    _chunks.extend(accepted_chunks)
+    _parent_chunks.extend(accepted_parents)
+    _chunk_doc.extend(accepted_docs)
+    _chunk_page.extend(accepted_pages)
+    _chunk_type.extend(accepted_types)
     _doc_names.append(filename)
 
-    # Rebuild FAISS index
-    _rebuild()
-    
-    # Save index & metadata to disk (FIX-4)
-    save_persisted_index()
+    # 4. Persist metadata to SQLite (incremental — no full rewrite)
+    _save_chunks_to_db(
+        accepted_chunks, accepted_parents, accepted_docs,
+        accepted_pages, accepted_types, filename
+    )
 
-    # Unload embed model to free memory
-    unload_model()
+    # 5. Build combined embeddings for full FAISS rebuild
+    #    We need ALL embeddings (existing + new) to rebuild the index.
+    #    For existing vectors we reconstruct from the current FAISS index.
+    all_embeddings = []
+    if _faiss_index is not None and _faiss_index.ntotal > 0:
+        existing_count = _faiss_index.ntotal
+        for i in range(existing_count):
+            try:
+                all_embeddings.append(_faiss_index.reconstruct(i).tolist())
+            except Exception:
+                pass
+    all_embeddings.extend(new_embeddings)
+
+    # 6. Rebuild FAISS with all embeddings
+    _rebuild(all_embeddings)
+
+    # 7. Save updated FAISS index to disk
+    save_persisted_index(all_embeddings)
 
     return count
 
 
 # ── Remove Document ───────────────────────────────────────
 def remove_document(filename: str) -> bool:
-    global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names, _embeddings
+    global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names
 
     if filename not in _doc_names:
         return False
 
     keep = [i for i in range(len(_chunks)) if _chunk_doc[i] != filename]
-    
+
     _chunks = [_chunks[i] for i in keep]
     _parent_chunks = [_parent_chunks[i] for i in keep]
     _chunk_doc = [_chunk_doc[i] for i in keep]
     _chunk_page = [_chunk_page[i] for i in keep]
     _chunk_type = [_chunk_type[i] for i in keep]
-    _embeddings = [_embeddings[i] for i in keep]
-    
+
     _doc_names.remove(filename)
     _images.pop(filename, None)
 
-    _rebuild()
-    
-    # Save index after removal (FIX-4)
-    save_persisted_index()
+    # Delete from SQLite
+    _delete_doc_from_db(filename)
+
+    # Rebuild FAISS: reconstruct embeddings from current index for kept chunks
+    # We reconstruct ONLY the kept vectors using their original FAISS positions.
+    # Since we removed some chunks we need to re-embed or rebuild from scratch.
+    # Simplest correct approach: re-embed the kept chunks.
+    _rebuild_from_kept_chunks()
+
     return True
+
+
+def _rebuild_from_kept_chunks():
+    """Re-embed all current in-memory chunks and rebuild the FAISS index."""
+    global _faiss_index
+
+    if not _chunks:
+        _faiss_index = None
+        save_persisted_index([])
+        return
+
+    from llm import get_embed_model
+    embed_model = get_embed_model()
+
+    embeddings = []
+    for chunk in _chunks:
+        try:
+            res = embed_model.create_embedding(chunk)
+            embeddings.append(res["data"][0]["embedding"])
+        except Exception:
+            embeddings.append([0.0] * 768)  # fallback zero vector
+
+    _rebuild(embeddings)
+    save_persisted_index(embeddings)
+    print(f"[RAG] FAISS rebuilt from {len(_chunks)} kept chunks")
 
 
 # ── Clear All ─────────────────────────────────────────────
 def clear_all():
-    global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, _doc_names, _embeddings, _faiss_index, _images
+    global _chunks, _parent_chunks, _chunk_doc, _chunk_page, _chunk_type, \
+           _doc_names, _faiss_index, _images
     _chunks.clear()
     _parent_chunks.clear()
     _chunk_doc.clear()
     _chunk_page.clear()
     _chunk_type.clear()
-    _embeddings.clear()
     _doc_names.clear()
     _images.clear()
     _faiss_index = None
-    
-    # Remove persisted files
-    index_path = os.path.join(USB_ROOT, "index.faiss")
-    meta_path = os.path.join(USB_ROOT, "chunks_meta.json")
-    if os.path.exists(index_path):
+
+    # Clear SQLite
+    _clear_db()
+
+    # Remove FAISS index file
+    if os.path.exists(_INDEX_PATH):
         try:
-            os.remove(index_path)
+            os.remove(_INDEX_PATH)
         except Exception:
             pass
-    if os.path.exists(meta_path):
+
+    # Remove legacy chunks_meta.json if it exists (migration cleanup)
+    legacy_meta = os.path.join(USB_ROOT, "chunks_meta.json")
+    if os.path.exists(legacy_meta):
         try:
-            os.remove(meta_path)
+            os.remove(legacy_meta)
+            print("[RAG] Removed legacy chunks_meta.json")
         except Exception:
             pass
-    
-    from llm import unload_model
-    unload_model()
 
 
 # ── Search Chunks (Dense Vector) ──────────────────────────
@@ -567,7 +726,7 @@ def search_chunks(query: str, top_k: int = 20) -> list[dict]:
     if not _chunks or _faiss_index is None:
         return []
 
-    from llm import get_embed_model, unload_model
+    from llm import get_embed_model
     embed_model = get_embed_model()
 
     try:
@@ -575,16 +734,12 @@ def search_chunks(query: str, top_k: int = 20) -> list[dict]:
         q_vec = np.array(res["data"][0]["embedding"], dtype="float32")
     except Exception as e:
         print(f"[RAG] Failed to embed query: {e}")
-        unload_model()
         return []
 
     # Normalize query vector
     norm = np.linalg.norm(q_vec)
     if norm > 0:
         q_vec /= norm
-
-    # Unload embed model to free memory
-    unload_model()
 
     q_vec = q_vec.reshape(1, -1)
     faiss_scores, faiss_idx = _faiss_index.search(q_vec, min(top_k, len(_chunks)))
@@ -623,16 +778,12 @@ def search_adaptive(query: str, top_k: int = 5) -> dict:
     if not chunks:
         return empty
 
-    # ── Confidence scoring based on top FAISS similarity score ──
-    # Cosine similarity for normalized vectors is in range [-1, 1], usually [0.3, 0.8] for text
     top_score = chunks[0]["faiss_score"]
     confidence = max(0.0, min(1.0, (top_score - 0.2) / 0.6))
 
-    # ── Build context ─────────────────────────────────────
     MAX_CHARS = 2500
     final = ""
     sources = []
-    has_images = False
 
     for c in chunks:
         part = f"[Document: {c['doc']}, page {c['page']}]\n{c['parent_text']}\n\n"
@@ -640,17 +791,16 @@ def search_adaptive(query: str, top_k: int = 5) -> dict:
             break
         final += part
         sources.append({"doc": c["doc"], "page": c["page"], "score": round(c["faiss_score"], 4)})
-        
-    # Check if any document has images
-    if _images:
-        has_images = True
 
-    # Suggestion for low confidence
+    has_images = bool(_images)
+
     suggestion = ""
     if confidence < 0.3 and final:
         doc_names = list(set(s["doc"] for s in sources))
-        suggestion = (f"The query may not be directly covered, but related "
-                      f"content was found in: {', '.join(doc_names)}")
+        suggestion = (
+            f"The query may not be directly covered, but related "
+            f"content was found in: {', '.join(doc_names)}"
+        )
 
     return {
         "context": final.strip(),
@@ -669,7 +819,7 @@ def get_stats() -> dict:
         "doc_count": len(_doc_names),
         "image_count": sum(len(v) for v in _images.values()),
         "supported_formats": get_supported_formats(),
-        "session_only": True,
+        "db_path": _DB_PATH,
     }
 
 

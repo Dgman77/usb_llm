@@ -1,77 +1,37 @@
 """
 crag.py — CRAG (Corrective RAG) Evaluation Layer
 
-Acts as a gatekeeper between retrieval and LLM generation.
-Evaluates whether retrieved chunks are *actually relevant and sufficient*
-to answer the user's query. If chunks fail evaluation, the system returns
-a refusal message WITHOUT passing to the LLM — eliminating hallucination
-at the retrieval stage.
-
-Evaluation signals (lightweight — no extra LLM calls):
-  1. Rerank scores:  Are the top chunks scored highly by the reranker?
-  2. Coverage check:  Do the chunks contain query-relevant keywords?
-  3. Density check:   Is there enough content volume to answer the query?
-
-Design note: Previous version called evaluate_sufficiency() which loaded the
-full chat model mid-pipeline, causing catastrophic memory swaps on 8GB systems.
-This version uses heuristic signals only — fast and memory-safe.
-
-Reference: Yan et al., "Corrective Retrieval Augmented Generation" (2024)
+Optimized for low-spec CPU environments:
+  - Uses pre-computed FAISS scores directly for topic relevance (zero extra embedding dot product checks).
+  - High performance, lightweight heuristic checks.
 """
 
 import re
-import numpy as np
-
 
 # ── Thresholds ────────────────────────────────────────────────
-RERANK_THRESHOLD = 0.30       # Minimum average rerank score to pass
+RERANK_THRESHOLD = 0.30       # Minimum average score to pass
 COVERAGE_THRESHOLD = 0.20     # Minimum query term coverage in chunks
 DENSITY_THRESHOLD = 100       # Minimum character count in context
 COMBINED_THRESHOLD = 0.35     # Minimum combined score to pass
-
 TOPIC_RELEVANCE_THRESHOLD = 0.35
-# Tune lower (0.25) for strict matching
-# Tune higher (0.45) for loose topic matching
 
 
-def check_topic_relevance(query_embedding, chunk_embeddings):
+def check_topic_relevance(best_score: float):
     """
-    Semantic gate: checks if ANY retrieved chunk
-    is actually about the query topic.
-    Returns (is_relevant: bool, best_score: float)
-
-    Runs BEFORE CRAG heuristic scoring.
-    If False → skip CRAG, return no-answer.
-
-    Vectors must be L2 normalised already.
-    Uses dot product = cosine similarity.
+    Semantic gate: checks if the highest similarity score
+    retrieved from FAISS is above the threshold.
     """
-    if not chunk_embeddings:
-        return False, 0.0
-
-    similarities = []
-    for ce in chunk_embeddings:
-        score = float(np.dot(query_embedding, ce))
-        similarities.append(score)
-
-    best_score = max(similarities)
-
-    if best_score < TOPIC_RELEVANCE_THRESHOLD:
-        return False, best_score
-
-    return True, best_score
+    return best_score >= TOPIC_RELEVANCE_THRESHOLD, best_score
 
 
-def evaluate(query: str, query_embedding, chunks: list[dict], chunk_embeddings: list) -> dict:
+def evaluate(query: str, chunks: list[dict]) -> dict:
     """
     Evaluate if retrieved chunks are relevant and sufficient to answer the query.
-    Uses lightweight heuristic signals — NO LLM calls (saves memory on 8GB systems).
+    Uses pre-calculated FAISS scores and term coverage.
     
     Args:
         query:  The user's original question
-        query_embedding: The query vector embedding
-        chunks: List of reranked chunk dicts with 'text', 'parent_text', 'rerank_score'
-        chunk_embeddings: Embeddings parallel to chunks
+        chunks: List of retrieved chunks with 'text', 'parent_text', 'faiss_score'
         
     Returns:
         {
@@ -81,16 +41,6 @@ def evaluate(query: str, query_embedding, chunks: list[dict], chunk_embeddings: 
             "context": str,         # Assembled context string (if pass)
         }
     """
-    # Step 1: Semantic relevance topic check (FIX-6)
-    is_rel, best_score = check_topic_relevance(query_embedding, chunk_embeddings)
-    if not is_rel:
-        return {
-            "pass": False,
-            "reason": "out_of_domain",
-            "best_similarity": best_score,
-            "crag_score": 0.0
-        }
-
     if not chunks:
         return {
             "pass": False,
@@ -99,11 +49,23 @@ def evaluate(query: str, query_embedding, chunks: list[dict], chunk_embeddings: 
             "context": "",
         }
 
-    # ── Signal 1: Rerank score analysis ───────────────────────
-    rerank_scores = [c.get("rerank_score", 0.0) for c in chunks]
-    avg_rerank = sum(rerank_scores) / len(rerank_scores)
-    top_rerank = max(rerank_scores)
-    rerank_signal = min(1.0, (avg_rerank + top_rerank) / 2)
+    # Step 1: Semantic relevance topic check using pre-computed FAISS score
+    best_score = chunks[0].get("faiss_score", 0.0)
+    is_rel, best_similarity = check_topic_relevance(best_score)
+    if not is_rel:
+        return {
+            "pass": False,
+            "reason": "out_of_domain",
+            "best_similarity": best_similarity,
+            "score": 0.0,
+            "context": ""
+        }
+
+    # ── Signal 1: Similarity score analysis ───────────────────
+    scores = [c.get("faiss_score", 0.0) for c in chunks]
+    avg_score = sum(scores) / len(scores)
+    top_score = scores[0]
+    similarity_signal = min(1.0, (avg_score + top_score) / 2)
 
     # ── Signal 2: Query term coverage ─────────────────────────
     query_terms = set(_tokenize(query))
@@ -122,20 +84,20 @@ def evaluate(query: str, query_embedding, chunks: list[dict], chunk_embeddings: 
     density_signal = min(1.0, content_length / 500)  # Saturates at 500 chars
 
     # ── Combined score ────────────────────────────────────────
-    # Weighted: rerank quality (40%) + coverage (35%) + density (25%)
-    combined = (rerank_signal * 0.40) + (coverage_signal * 0.35) + (density_signal * 0.25)
+    # Weighted: similarity quality (40%) + coverage (35%) + density (25%)
+    combined = (similarity_signal * 0.40) + (coverage_signal * 0.35) + (density_signal * 0.25)
 
     passed = combined >= COMBINED_THRESHOLD and content_length >= DENSITY_THRESHOLD
 
     # Build reason string
     if passed:
         reason = (f"Context verified (score={combined:.2f}): "
-                  f"rerank={rerank_signal:.2f}, coverage={coverage_signal:.2f}, "
+                  f"similarity={similarity_signal:.2f}, coverage={coverage_signal:.2f}, "
                   f"density={density_signal:.2f}")
     else:
         reasons = []
-        if rerank_signal < RERANK_THRESHOLD:
-            reasons.append(f"low rerank quality ({rerank_signal:.2f})")
+        if similarity_signal < RERANK_THRESHOLD:
+            reasons.append(f"low similarity quality ({similarity_signal:.2f})")
         if coverage_signal < COVERAGE_THRESHOLD:
             reasons.append(f"poor query coverage ({coverage_signal:.2f})")
         if content_length < DENSITY_THRESHOLD:
@@ -177,7 +139,6 @@ def _build_context(chunks: list[dict], max_chars: int = 3500) -> str:
 
 def _tokenize(text: str) -> list[str]:
     """Simple tokenization for coverage check."""
-    # Remove common stop words and return meaningful terms
     stop = {
         "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
         "have", "has", "had", "do", "does", "did", "will", "would", "could",
