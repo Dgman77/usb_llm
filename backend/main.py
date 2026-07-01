@@ -8,7 +8,9 @@ on any drive letter (D: E: G: etc.)
 import os
 import sys
 import re
+import asyncio
 from contextlib import asynccontextmanager
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -20,6 +22,9 @@ from router import route, detect_diagram_type
 from llm import load_model, generate
 from rag import add_document, remove_document, search, get_stats
 from orchestrator import handle_request
+
+# Thread pool for running blocking LLM inference off the async event loop
+_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 
 
 # USB-safe paths — always relative to this file's location
@@ -50,18 +55,23 @@ async def lifespan(app: FastAPI):
         # Load resident models (embedding + active chat model)
         from llm import load_all_models
         load_all_models()
-        
+
         # Load persisted FAISS index & metadata
         from rag import load_persisted_index
         load_persisted_index()
-        
+
         print("[Server] Ready — http://localhost:8787")
     except FileNotFoundError as e:
+        print(f"\n[Server] *** MODEL NOT FOUND ***")
         print(str(e))
-        print("[Server] WARNING: No model loaded. /api/generate will fail.")
+        print("[Server] Drop a .gguf file into the models/ folder and restart.")
+        print("[Server] Server is running but /api/generate will return an error.")
     except Exception as e:
-        print(f"[Server] WARNING: Model loading error: {e}")
-        print("[Server] Server will start but model loading is deferred.")
+        import traceback
+        print(f"\n[Server] *** MODEL LOAD ERROR ***")
+        print(f"[Server] {type(e).__name__}: {e}")
+        traceback.print_exc()
+        print("[Server] Server is running but /api/generate will return an error.")
     yield
     print("[Server] Stopping...")
     try:
@@ -105,7 +115,8 @@ class GenerateRequest(BaseModel):
     message: str
 
 
-import asyncio
+# One request at a time — Semaphore(1) queues concurrent callers correctly.
+# NOTE: do NOT add an 'if not locked()' guard — that inverts the logic.
 _generate_lock = asyncio.Semaphore(1)
 
 
@@ -114,22 +125,29 @@ async def api_generate(req: GenerateRequest):
     if not req.message.strip():
         raise HTTPException(400, "Message cannot be empty")
 
-    if not _generate_lock.locked():
-        async with _generate_lock:
-            try:
-                result = handle_request(req.message)
-            except FileNotFoundError as e:
-                raise HTTPException(503, str(e))
-            except Exception as e:
-                raise HTTPException(500, f"Generation failed: {e}")
-            return JSONResponse(result)
-    else:
+    # Non-blocking acquire: if the semaphore is already taken, return 429
+    # so the client knows to retry rather than hanging indefinitely.
+    if _generate_lock.locked():
         return JSONResponse(
             status_code=429,
-            content={
-                "error": "Generation in progress. Please wait."
-            }
+            content={"error": "Generation already in progress. Please wait and retry."},
         )
+
+    async with _generate_lock:
+        loop = asyncio.get_event_loop()
+        try:
+            # Run blocking LLM inference in a ThreadPoolExecutor so the async
+            # event loop stays alive (can still serve health-checks, uploads, etc.)
+            result = await loop.run_in_executor(
+                _EXECUTOR, handle_request, req.message
+            )
+        except FileNotFoundError as e:
+            raise HTTPException(503, str(e))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(500, f"Generation failed: {type(e).__name__}: {e}")
+        return JSONResponse(result)
 
 
 @app.post("/api/upload")

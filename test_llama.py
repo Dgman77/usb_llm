@@ -55,8 +55,9 @@ search_paths = [
 model_path = None
 for folder in search_paths:
     hits = glob.glob(os.path.join(folder, "*.gguf"))
-    if hits:
-        model_path = hits[0]
+    chat_hits = [f for f in hits if not any(term in os.path.basename(f).lower() for term in ("embed", "rerank", "nomic"))]
+    if chat_hits:
+        model_path = chat_hits[0]
         print(f"  OK   Found: {model_path}")
         size_gb = os.path.getsize(model_path) / (1024**3)
         print(f"  OK   Size:  {size_gb:.2f} GB")

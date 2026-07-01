@@ -174,35 +174,46 @@ def _clear_db():
 
 # ── Chunking by Tokens ────────────────────────────────────
 def chunk_text_by_tokens(text: str, model, chunk_size: int, overlap: int) -> list[str]:
-    """Split text into chunks of specified tokens with overlap using model tokenizer."""
-    try:
-        tokens = model.tokenize(text.encode('utf-8', errors='ignore'))
-    except Exception as e:
-        print(f"[RAG] Tokenizer failed: {e} — falling back to word-based approximation")
-        words = text.split()
-        chunks = []
-        i = 0
-        while i < len(words):
-            chunk_words = words[i : i + chunk_size]
-            chunks.append(" ".join(chunk_words))
-            if i + chunk_size >= len(words):
-                break
-            i += (chunk_size - overlap)
-        return chunks
+    """Split text into sentence-aware chunks of specified tokens with overlap."""
+    # Split text into sentences/paragraphs using regex
+    sentences = re.split(r'(?<=[.!?])\s+|\n+', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    if not sentences:
+        return []
 
     chunks = []
-    i = 0
-    while i < len(tokens):
-        chunk_tokens = tokens[i : i + chunk_size]
+    current_chunk = []
+    current_tokens = 0
+
+    for sentence in sentences:
         try:
-            chunk_text = model.detokenize(chunk_tokens).decode('utf-8', errors='ignore')
+            s_tokens = len(model.tokenize(sentence.encode('utf-8', errors='ignore')))
         except Exception:
-            chunk_text = ""
-        if chunk_text.strip():
-            chunks.append(chunk_text)
-        if i + chunk_size >= len(tokens):
-            break
-        i += (chunk_size - overlap)
+            s_tokens = len(sentence.split())  # fallback
+            
+        if current_tokens + s_tokens > chunk_size and current_chunk:
+            chunks.append(" ".join(current_chunk))
+            # Build overlap by taking sentences from the end of the current chunk
+            overlap_chunk = []
+            overlap_tokens = 0
+            for s in reversed(current_chunk):
+                try:
+                    s_tok = len(model.tokenize(s.encode('utf-8', errors='ignore')))
+                except Exception:
+                    s_tok = len(s.split())
+                if overlap_tokens + s_tok > overlap:
+                    break
+                overlap_chunk.insert(0, s)
+                overlap_tokens += s_tok
+            current_chunk = overlap_chunk
+            current_tokens = overlap_tokens
+
+        current_chunk.append(sentence)
+        current_tokens += s_tokens
+
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+
     return chunks if chunks else [text]
 
 

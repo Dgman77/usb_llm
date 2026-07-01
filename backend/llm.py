@@ -46,17 +46,29 @@ def find_model() -> str:
     if os.path.exists(path_file):
         with open(path_file, "r", encoding="utf-8") as f:
             saved = _sanitize_path(f.read())
-        if saved and os.path.exists(saved):
+        # Verify saved model path exists and is not an embedding/rerank model
+        is_embed = any(term in os.path.basename(saved).lower() for term in ("embed", "rerank", "nomic"))
+        if saved and os.path.exists(saved) and not is_embed:
             print(f"[LLM] Model  : {os.path.basename(saved)}")
             return saved
         else:
-            print(f"[LLM] Saved model path invalid or not found: {saved!r}")
+            # Stale or embedding path — remove and re-scan
+            print(f"[LLM] Saved model path invalid or embedding model: {saved!r}")
+            print(f"[LLM] Clearing model_path.txt and scanning models folder...")
+            try:
+                os.remove(path_file)
+            except Exception:
+                pass
     gguf_files = glob.glob(os.path.join(MODELS_DIR, "*.gguf"))
     chat_files = [f for f in gguf_files if "embed" not in os.path.basename(f).lower() and "rerank" not in os.path.basename(f).lower()]
     if chat_files:
         chat_files = _prefer_quantized(chat_files)
         chosen = chat_files[0]
         print(f"[LLM] Model  : {os.path.basename(chosen)}")
+        # Save the freshly-discovered path for next time
+        os.makedirs(MODELS_DIR, exist_ok=True)
+        with open(path_file, "w", encoding="utf-8") as f:
+            f.write(chosen)
         return chosen
     for folder in [
         r"D:\models",
@@ -194,6 +206,9 @@ _model_type = None
 # Default strategy
 CURRENT_STRATEGY = "all_resident"
 
+# Cached chat format — set once when model loads, avoids repeated filename parsing
+_CACHED_CHAT_FORMAT: str = ""
+
 
 def get_gguf_size_gb(model_path):
     """
@@ -281,7 +296,7 @@ def get_reranker_model():
 
 
 def load_chat_model():
-    global _chat_model, _chat_model_path, _llm, _llm_path, _model_type
+    global _chat_model, _chat_model_path, _llm, _llm_path, _model_type, _CACHED_CHAT_FORMAT
     current = find_model()
     if _chat_model is not None and _chat_model_path == current:
         return _chat_model
@@ -289,13 +304,14 @@ def load_chat_model():
     unload_chat_model()
     print(f"[LLM] Loading chat model: {os.path.basename(current)}")
     n_ctx = LLM_CTX_WINDOW
-    n_threads = max(2, (os.cpu_count() or 4) // 2)
+    # Use all CPUs except one (for OS), minimum 4
+    n_threads = max(4, (os.cpu_count() or 4) - 1)
     try:
         _chat_model = Llama(
             model_path=current,
             n_ctx=n_ctx,
             n_threads=n_threads,
-            n_batch=256,
+            n_batch=512,        # Increased from 256 for better CPU throughput
             use_mmap=True,
             use_mlock=False,
             verbose=False,
@@ -304,6 +320,8 @@ def load_chat_model():
         _llm = _chat_model
         _llm_path = current
         _model_type = "chat"
+        # Cache format so _build_prompt never re-parses the filename
+        _CACHED_CHAT_FORMAT = _detect_chat_format(current)
     except Exception as e:
         print(f"[LLM] ERROR loading chat model: {e}")
         _chat_model = None
@@ -311,9 +329,10 @@ def load_chat_model():
         _llm = None
         _llm_path = None
         _model_type = None
+        _CACHED_CHAT_FORMAT = ""
         raise
-    print(f"[LLM] Ready — {os.path.basename(current)} (ctx={n_ctx}, threads={n_threads})")
-    print(f"[LLM] Chat format: {_detect_chat_format(current)}")
+    print(f"[LLM] Ready — {os.path.basename(current)} (ctx={n_ctx}, threads={n_threads}, batch=512)")
+    print(f"[LLM] Chat format: {_CACHED_CHAT_FORMAT}")
     return _chat_model
 
 
@@ -362,7 +381,8 @@ def _detect_chat_format(model_path: str) -> str:
 
 def _build_prompt(system: str, user: str, assistant_start: str = "") -> str:
     """Build a prompt string using the correct chat template for the loaded model."""
-    fmt = _detect_chat_format(_llm_path or "")
+    # Use cached format to avoid repeated filename parsing
+    fmt = _CACHED_CHAT_FORMAT or _detect_chat_format(_llm_path or "")
     if fmt == "chatml":
         p = (f"<|im_start|>system\n{system}<|im_end|>\n"
              f"<|im_start|>user\n{user}<|im_end|>\n"
@@ -379,12 +399,12 @@ def _build_prompt(system: str, user: str, assistant_start: str = "") -> str:
 
 def _stop_tokens() -> list:
     """Return stop tokens for the loaded model's chat format."""
-    fmt = _detect_chat_format(_llm_path or "")
+    fmt = _CACHED_CHAT_FORMAT or _detect_chat_format(_llm_path or "")
     if fmt == "chatml":
-        return ["<|im_end|>", "<|im_start|>", "```\n\n"]
+        return ["<|im_end|>", "<|im_start|>"]
     elif fmt == "phi":
-        return ["<|end|>", "<|user|>", "```\n\n"]
-    return ["[INST]", "</s>", "```\n\n"]
+        return ["<|end|>", "<|user|>"]
+    return ["[INST]", "</s>"]
 
 
 # ── Improvement 1: Diagram prompts with DOT examples ──────────────────────────
@@ -669,14 +689,12 @@ Now generate a DETAILED mind map DOT diagram with SPECIFIC content for:""",
 }
 
 RAG_SYSTEM_PROMPT = """You are a strict document assistant. Answer ONLY using the context provided.
+Your task is to list the direct, related factual statements from the context that answer the question. Do not generate your own answer.
 
 RULES:
-1. If context contains the answer — answer clearly and cite the source.
-2. If context does NOT contain the answer — say exactly: "This information is not available in the uploaded document."
-3. NEVER use training knowledge to fill gaps.
-4. NEVER guess or infer anything not explicitly present in the provided context.
-5. NEVER say "based on general knowledge" or any similar phrase.
-6. If only partial info available — share what IS in the document and clearly state what is missing.
+1. List only the direct, related facts from the context. Do not explain, summarize, or extrapolate.
+2. If the context does not contain any direct related information to answer the question, output exactly: "This information is not available in the uploaded document."
+3. Do not make assumptions or use outside knowledge.
 """
 
 GENERAL_SYSTEM_PROMPT = """You are a helpful AI assistant. Answer the user's question clearly and accurately using your knowledge.
@@ -887,11 +905,14 @@ def generate(
         prefix = "digraph G {\n"
         full_prompt = _build_prompt(diagram_sys, user_msg, prefix)
 
+        # Diagram-specific token budget:
+        # max_tokens must fit WITHIN n_ctx minus the prompt length.
+        # 1024 new tokens is plenty for a rich DOT diagram.
+        max_new_tokens = min(1024, LLM_CTX_WINDOW - 512)
         temp = 0.2
-        max_tokens = LLM_CTX_WINDOW
 
         def _generate_once(t):
-            r = llm(full_prompt, max_tokens=max_tokens, temperature=t, stop=stops, echo=False)
+            r = llm(full_prompt, max_tokens=max_new_tokens, temperature=t, stop=stops, echo=False)
             body = r["choices"][0]["text"].strip()
             # Remove any repeated digraph header the model might echo
             if body.lower().startswith("digraph"):
@@ -907,7 +928,7 @@ def generate(
         score = complexity_score(processed)
         print(f"[LLM] Diagram attempt 1: score={score}")
 
-        # Retry if too simple or has placeholder labels
+        # Retry only if too simple or plagued by placeholder labels
         if score < 6 or _has_placeholder_labels(processed):
             reason = "too simple" if score < 6 else "placeholder labels"
             print(f"[LLM] Rejected ({reason}) — retrying...")
@@ -917,7 +938,9 @@ def generate(
                 print(f"[LLM] Retry {attempt+1}: score={s2}")
                 if s2 > score:
                     processed, score = p2, s2
+                # Break early once we have a good diagram
                 if s2 >= 6 and not _has_placeholder_labels(p2):
+                    print(f"[LLM] Early-exit retry after attempt {attempt+1}")
                     break
             print(f"[LLM] Final diagram score={score}")
 
@@ -929,7 +952,7 @@ def generate(
         stops = _stop_tokens()
         
         user_msg = (
-            f"=== DOCUMENT EXCERPTS ===\n{context[:4096]}\n=== END ===\n\n"
+            f"<context>\n{context[:4096]}\n</context>\n\n"
             f"Question: {prompt}"
         )
         full_prompt = _build_prompt(system_prompt, user_msg)
@@ -937,6 +960,7 @@ def generate(
             full_prompt,
             max_tokens=600,
             temperature=0.1,
+            repeat_penalty=1.1, # Prevent repetition loops on low temperatures
             stop=stops,
             echo=False,
         )
@@ -949,6 +973,7 @@ def generate(
         full_prompt,
         max_tokens=512,
         temperature=0.2,
+        repeat_penalty=1.1, # Prevent repetition loops
         stop=stops,
         echo=False,
     )

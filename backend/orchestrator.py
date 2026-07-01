@@ -14,11 +14,22 @@ The orchestrator runs:
 """
 
 import re
+import os
 from router import route, detect_diagram_type, user_wants_doc_to_diagram
 from rag import search_chunks, has_documents, get_all_content
 from llm import generate, load_model
-from hyde import rewrite_query
 from crag import evaluate, TOPIC_RELEVANCE_THRESHOLD
+
+# HyDE adds a full second LLM inference call (150 tokens) before every RAG
+# query, adding 15-45 seconds latency on CPU. Disabled by default.
+# Set environment variable HYDE_ENABLED=1 to re-enable.
+_HYDE_ENABLED = os.environ.get("HYDE_ENABLED", "0").strip() == "1"
+if _HYDE_ENABLED:
+    from hyde import rewrite_query
+else:
+    def rewrite_query(query: str) -> str:
+        """Fast passthrough: returns the raw query for embedding."""
+        return query
 
 
 # ── Main Entry Point ───────────────────────────────────────────────────────────
@@ -165,11 +176,14 @@ def _handle_qa(user_message: str) -> dict:
 
     # ── ROUTE 2: Full RAG QA ──────────────────────────────────────────────────
 
-    # Step 1: HyDE query rewriting — improves retrieval by bridging
-    #         the semantic gap between question-style and document-style text.
-    print(f"[Orchestrator] Step 1 — HyDE query rewriting...")
-    hyde_query = rewrite_query(user_message)
-    print(f"[Orchestrator] HyDE: {hyde_query[:100]}...")
+    # Step 1: Query rewriting (HyDE if enabled, else raw query)
+    if _HYDE_ENABLED:
+        print(f"[Orchestrator] Step 1 — HyDE query rewriting...")
+        hyde_query = rewrite_query(user_message)
+        print(f"[Orchestrator] HyDE: {hyde_query[:100]}...")
+    else:
+        hyde_query = user_message
+        print(f"[Orchestrator] Step 1 — Using raw query (HyDE disabled for speed)")
 
     # Step 2: Dense FAISS retrieval with HyDE query
     print(f"[Orchestrator] Step 2 — FAISS retrieval (top 10)...")
