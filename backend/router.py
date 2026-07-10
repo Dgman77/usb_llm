@@ -179,13 +179,16 @@ def user_wants_doc_to_diagram(user_message: str) -> bool:
 
     # First check for document-to-diagram keywords
     for kw in DOC_TO_DIAGRAM_KEYWORDS:
-        if kw in msg:
+        if re.search(r"\b" + re.escape(kw) + r"s?\b", msg):
             return True
 
     # Also check if "diagram" is requested AND user mentions "document"/"file"/"upload"
-    diagram_requested = any(kw in msg for kw in ALL_DIAGRAM_KEYWORDS)
+    diagram_requested = any(
+        re.search(r"\b" + re.escape(kw) + r"\b", msg)
+        for kw in ALL_DIAGRAM_KEYWORDS
+    )
     doc_reference = any(
-        kw in msg
+        re.search(r"\b" + re.escape(kw) + r"s?\b", msg)
         for kw in [
             "document", "file", "upload", "uploaded", "pdf", "docx",
             "txt", "knowledge", "external", "attachment",

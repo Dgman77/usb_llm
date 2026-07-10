@@ -689,7 +689,7 @@ Now generate a DETAILED mind map DOT diagram with SPECIFIC content for:""",
 }
 
 RAG_SYSTEM_PROMPT = """You are a strict document assistant. Answer ONLY using the context provided.
-Your task is to list the direct, related factual statements from the context that answer the question. Do not generate your own answer.
+Your task is to list the direct, related factual statements from the context that answer the question. Format the statements clearly as a bulleted list (point by point). Do not generate your own answer.
 
 RULES:
 1. List only the direct, related facts from the context. Do not explain, summarize, or extrapolate.

@@ -8,3 +8,7 @@ models/llama-2-7b.Q4_K_M.gguf
 models/nomic-embed-text-v1.5.Q8_0.gguf
 models/bge-reranker-v2-m3-q8_0.gguf
 /diagram.md
+models/nvidia_Llama-3.1-Nemotron-Nano-4B-v1.1-Q5_K_M.gguf
+models/DeepSeek-R1-q4_k_m.gguf
+models/desktop.ini
+/data
