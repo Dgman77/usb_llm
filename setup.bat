@@ -530,6 +530,26 @@ IF NOT EXIST "%ROOT%\models\nomic-embed-text-v1.5.Q8_0.gguf" (
     echo [SKIP] Embedding model already exists.
 )
 
+:: Download Chat Model (Qwen2.5-3B-Instruct Q5_K_M) from HuggingFace
+SET "QWEN_MODEL=%ROOT%\models\Qwen2.5-3B-Instruct.Q5_K_M.gguf"
+SET "QWEN_EXISTS="
+FOR %%F IN ("%ROOT%\models\*Qwen*Q5*.gguf") DO SET "QWEN_EXISTS=1"
+IF DEFINED QWEN_EXISTS (
+    echo [SKIP] Qwen chat model already exists in models\ folder.
+) ELSE (
+    echo Downloading chat model: Qwen2.5-3B-Instruct.Q5_K_M.gguf ~2.1GB ...
+    echo Source: huggingface.co/dghf77/Qwen2.5-3B-Instruct.Q5_spec_Dot_code_generation
+    call :download "https://huggingface.co/dghf77/Qwen2.5-3B-Instruct.Q5_spec_Dot_code_generation/resolve/main/Qwen2.5-3B-Instruct.Q5_K_M.gguf" "%QWEN_MODEL%"
+    IF EXIST "%QWEN_MODEL%" (
+        echo [OK] Chat model downloaded successfully.
+    ) ELSE (
+        echo [WARNING] Failed to download chat model.
+        echo           Download manually from:
+        echo           https://huggingface.co/dghf77/Qwen2.5-3B-Instruct.Q5_spec_Dot_code_generation/resolve/main/Qwen2.5-3B-Instruct.Q5_K_M.gguf
+        echo           Place in: %ROOT%\models\
+    )
+)
+
 :: Reranker model download removed to optimize for low-spec CPU environments and prevent disk swapping.
 :: ─────────────────────────────────────────────────────────────
 :done

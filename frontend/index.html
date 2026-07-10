@@ -1249,7 +1249,7 @@
       const newDot = dot.replace(nodeRegex, `${nodeId} [${newAttrs}]`);
       document.getElementById('dot-editor').value = newDot;
       wsOriginalDot = newDot;
-      wsDebouncedRender();
+      // Node edit applied to editor — click Compile to re-render.
     }
     closeNodePopup();
   }
@@ -1461,7 +1461,7 @@
     }
   });
 
-  document.getElementById('dot-editor').addEventListener('input', () => wsDebouncedRender());
+  // Auto-compile on input removed — user must click the Compile button to re-render.
 
   document.addEventListener('click', (e) => {
     const popup = document.getElementById('node-popup');
