@@ -189,7 +189,7 @@ def user_wants_doc_search(message: str) -> bool:
 MAX_RAM_GB = 7.5
 SYSTEM_OVERHEAD_GB = 2.35
 EMBED_SIZE_GB = 0.14
-LLM_CTX_WINDOW = 4096
+LLM_CTX_WINDOW = 8192
 
 _chat_model = None
 _chat_model_path = None
@@ -877,14 +877,21 @@ def generate(
 
         # ── System prompt: short & direct (small models work better with less)
         diagram_sys = (
-            "Output only valid Graphviz DOT code. Start with `digraph G {`. "
-            "Use `rankdir`, `node [shape=box]`, and `edge` attributes. "
-            "Use `fontname=\"Arial\"` and `fontsize=12` for nodes, `fontsize=11` for edges. "
-            "No markdown fences. No explanation text. No commentary.\n"
-            "RULES: Every node label MUST be specific to the user's topic.\n"
-            "BANNED labels: Start, End, Process, Decision, Action, Step, Node, Other.\n"
-            f"Syntax: {type_hint}"
-        )
+    "Output only valid Graphviz DOT code. Start with `digraph G {`. "
+    "Always include `rankdir`, `node [shape=box]`, and `edge` attributes. "
+    "Use `fontname=\"Arial\"` and `fontsize=12` for nodes, `fontsize=11` for edges. "
+    "Do not use markdown fences, explanation text, or commentary. "
+    "RULES: Every node label MUST be specific to the user's topic. "
+    "BANNED labels: Start, End, Process, Decision, Action, Step, Node, Other. "
+    "Syntax must strictly follow Graphviz DOT standards. "
+    "Do not hallucinate or invent labels, attributes, or structures. "
+    "If the user's prompt does not provide enough detail, ask for clarification before generating code. "
+    "Never repeat the same code or explanation unnecessarily. "
+    "Always rely on the user's prompt as the single source of truth. "
+    "Do not ever hallucinate your answer — rely only on the user's prompt. "
+    f"Syntax: {type_hint}"
+)
+
 
         if context:
             context = context[:3000]
