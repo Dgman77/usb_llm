@@ -606,12 +606,13 @@
     #node-popup {
       display: none; position: fixed; background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); z-index: 2000;
-      gap: 8px; min-width: 220px; flex-direction: column;
+      gap: 6px; min-width: 260px; max-height: 90vh; overflow-y: auto; flex-direction: column;
     }
     #node-popup.active { display: flex; }
     #node-popup label {
       font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 700;
       color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;
+      margin-top: 4px;
     }
     #node-popup input, #node-popup select {
       padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
@@ -619,8 +620,33 @@
       font-size: 12px; outline: none;
     }
     #node-popup input:focus, #node-popup select:focus { border-color: var(--accent); }
-    .popup-actions { display: flex; gap: 6px; margin-top: 6px; }
+    .popup-actions { display: flex; gap: 6px; margin-top: 8px; }
     .popup-actions .tb-btn { flex: 1; font-size: 11px; text-align: center; }
+
+    .color-palette {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; margin-bottom: 6px;
+    }
+    .color-chip {
+      width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
+      border: 1px solid var(--border); transition: transform 0.1s;
+    }
+    .color-chip:hover {
+      transform: scale(1.2); box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+    }
+    .color-chip.active {
+      box-shadow: 0 0 0 2px var(--accent);
+      transform: scale(1.1);
+    }
+    .color-picker-wrapper {
+      position: relative; width: 18px; height: 18px; border-radius: 50%;
+      border: 1px solid var(--border);
+      background: conic-gradient(red, yellow, green, cyan, blue, magenta, red);
+      cursor: pointer; overflow: hidden; flex-shrink: 0;
+    }
+    .color-picker-wrapper input[type="color"] {
+      position: absolute; top: -5px; left: -5px; width: 30px; height: 30px;
+      opacity: 0; cursor: pointer;
+    }
 
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -749,6 +775,12 @@
 <div id="node-popup">
   <label>Label</label>
   <input type="text" id="popup-label" placeholder="Node label">
+  
+  <div style="display: flex; align-items: center; gap: 8px; margin: 4px 0 8px 0;">
+    <input type="checkbox" id="popup-bold" style="width: auto; cursor: pointer;">
+    <label for="popup-bold" style="cursor: pointer; margin: 0; text-transform: none;">Bold text</label>
+  </div>
+  
   <label>Shape</label>
   <select id="popup-shape">
     <option value="box">box</option>
@@ -760,8 +792,7 @@
     <option value="point">point</option>
     <option value="doublecircle">doublecircle</option>
   </select>
-  <label>Fill color</label>
-  <input type="text" id="popup-fill" placeholder="#faf6ee or red">
+
   <label>Style</label>
   <select id="popup-style">
     <option value="">None</option>
@@ -770,8 +801,46 @@
     <option value="dashed">dashed</option>
     <option value="dotted">dotted</option>
   </select>
+
+  <label>Fill color</label>
+  <div style="display: flex; gap: 8px; align-items: center;">
+    <input type="text" id="popup-fill" placeholder="#faf6ee or red" style="flex: 1;">
+    <div class="color-picker-wrapper" title="Choose custom color">
+      <input type="color" id="popup-fill-picker" oninput="updateFillFromPicker(this.value)">
+    </div>
+  </div>
+  <div class="color-palette" id="fill-palette">
+    <div class="color-chip" data-color="#cbd5e1" style="background: #cbd5e1;" onclick="selectFillPreset('#cbd5e1')" title="Slate Gray"></div>
+    <div class="color-chip" data-color="#fed7aa" style="background: #fed7aa;" onclick="selectFillPreset('#fed7aa')" title="Warm Orange"></div>
+    <div class="color-chip" data-color="#93c5fd" style="background: #93c5fd;" onclick="selectFillPreset('#93c5fd')" title="Medium Blue"></div>
+    <div class="color-chip" data-color="#86efac" style="background: #86efac;" onclick="selectFillPreset('#86efac')" title="Medium Green"></div>
+    <div class="color-chip" data-color="#fde047" style="background: #fde047;" onclick="selectFillPreset('#fde047')" title="Medium Yellow"></div>
+    <div class="color-chip" data-color="#fbcfe8" style="background: #fbcfe8;" onclick="selectFillPreset('#fbcfe8')" title="Medium Pink"></div>
+    <div class="color-chip" data-color="#d8b4fe" style="background: #d8b4fe;" onclick="selectFillPreset('#d8b4fe')" title="Medium Purple"></div>
+    <div class="color-chip" data-color="#fca5a5" style="background: #fca5a5;" onclick="selectFillPreset('#fca5a5')" title="Medium Red"></div>
+    <div class="color-chip" data-color="#94a3b8" style="background: #94a3b8;" onclick="selectFillPreset('#94a3b8')" title="Darker Gray"></div>
+  </div>
+
+  <label>Text color</label>
+  <div style="display: flex; gap: 8px; align-items: center;">
+    <input type="text" id="popup-fontcolor" placeholder="#000000 or blue" style="flex: 1;">
+    <div class="color-picker-wrapper" title="Choose custom text color">
+      <input type="color" id="popup-fontcolor-picker" oninput="updateFontColorFromPicker(this.value)">
+    </div>
+  </div>
+  <div class="color-palette" id="fontcolor-palette">
+    <div class="color-chip" data-color="#000000" style="background: #000000;" onclick="selectFontColorPreset('#000000')" title="Black"></div>
+    <div class="color-chip" data-color="#ffffff" style="background: #ffffff;" onclick="selectFontColorPreset('#ffffff')" title="White"></div>
+    <div class="color-chip" data-color="#1d4ed8" style="background: #1d4ed8;" onclick="selectFontColorPreset('#1d4ed8')" title="Blue"></div>
+    <div class="color-chip" data-color="#15803d" style="background: #15803d;" onclick="selectFontColorPreset('#15803d')" title="Green"></div>
+    <div class="color-chip" data-color="#c2410c" style="background: #c2410c;" onclick="selectFontColorPreset('#c2410c')" title="Orange"></div>
+    <div class="color-chip" data-color="#b91c1c" style="background: #b91c1c;" onclick="selectFontColorPreset('#b91c1c')" title="Red"></div>
+    <div class="color-chip" data-color="#7e22ce" style="background: #7e22ce;" onclick="selectFontColorPreset('#7e22ce')" title="Purple"></div>
+  </div>
+
   <label>Font size</label>
   <input type="text" id="popup-fontsize" placeholder="12">
+  
   <div class="popup-actions">
     <button class="tb-btn primary" onclick="applyNodeEdit()">Apply</button>
     <button class="tb-btn" onclick="closeNodePopup()">Cancel</button>
@@ -1143,23 +1212,71 @@
 
   function applyThemeToSVG(svg) {
     const isDark = document.body.getAttribute('data-theme') === 'dark';
-    const nodeFill = isDark ? '#f8fafc' : '#faf6ee';
-    const textFill = isDark ? '#111111' : '#000000';
-    const labelBg = isDark ? '#1a1a1e' : '#fdf8f0';
-    const stroke = isDark ? '#6366f1' : '#d97706';
-    const edgeStroke = isDark ? '#8a8a90' : '#7a756b';
-    svg.querySelectorAll('.node rect, .node polygon, .node circle, .node ellipse').forEach(el => {
-      el.setAttribute('fill', nodeFill); el.setAttribute('stroke', stroke);
+    const defaultNodeFill = isDark ? '#2e2e3e' : '#cbd5e1';
+    const defaultTextFill = isDark ? '#ffffff' : '#000000';
+    const stroke = isDark ? '#818cf8' : '#1e293b';
+    const edgeStroke = isDark ? '#94a3b8' : '#1e293b';
+    const labelBg = isDark ? '#1e1e24' : '#ffffff';
+
+    // Defaults that Graphviz uses when no explicit color is set
+    const GRAPHVIZ_DEFAULT_FILLS = new Set([
+      'none', 'transparent', '#ffffff', 'white',
+      '#faf6ee', '#cbd5e1', '#e2e8f0', // our default fillcolors
+      'lightyellow', '#ffffe0'
+    ]);
+
+    svg.querySelectorAll('.node').forEach(nodeGroup => {
+      nodeGroup.querySelectorAll('rect, polygon, circle, ellipse').forEach(el => {
+        const existingFill = (el.getAttribute('fill') || '').toLowerCase().trim();
+        // Only apply theme default fill if the shape has no explicit non-default fill
+        if (!existingFill || GRAPHVIZ_DEFAULT_FILLS.has(existingFill)) {
+          el.setAttribute('fill', defaultNodeFill);
+        }
+        el.setAttribute('stroke', stroke);
+      });
+
+      // Apply text color per-node, respecting explicit fontcolor set in DOT
+      nodeGroup.querySelectorAll('text').forEach(textEl => {
+        const existingFill = (textEl.getAttribute('fill') || '').toLowerCase().trim();
+        const GRAPHVIZ_DEFAULT_TEXT = new Set(['black', '#000000', '', 'none']);
+        if (!existingFill || GRAPHVIZ_DEFAULT_TEXT.has(existingFill)) {
+          textEl.setAttribute('fill', defaultTextFill);
+        }
+        if (isDark) {
+          textEl.setAttribute('paint-order', 'stroke');
+          textEl.setAttribute('stroke', '#0d0d1a');
+          textEl.setAttribute('stroke-width', '0.3px');
+          textEl.setAttribute('stroke-linejoin', 'round');
+        } else {
+          textEl.removeAttribute('paint-order');
+          textEl.removeAttribute('stroke');
+          textEl.removeAttribute('stroke-width');
+        }
+      });
     });
+
     svg.querySelectorAll('.edgeLabel rect').forEach(el => el.setAttribute('fill', labelBg));
     svg.querySelectorAll('.edgePath path').forEach(el => el.setAttribute('stroke', edgeStroke));
+
+    // Apply text styling for edge labels and graph title (outside .node groups)
     svg.querySelectorAll('text').forEach(el => {
-      el.setAttribute('fill', textFill);
-      el.setAttribute('font-weight', 'bold');
-      el.setAttribute('paint-order', 'stroke');
-      el.setAttribute('stroke', isDark ? '#f8fafc' : '#ffffff');
-      el.setAttribute('stroke-width', '0.3px');
-      el.setAttribute('stroke-linejoin', 'round');
+      // Skip if already handled by node group loop
+      if (el.closest('.node')) return;
+      const existingFill = (el.getAttribute('fill') || '').toLowerCase().trim();
+      const GRAPHVIZ_DEFAULT_TEXT = new Set(['black', '#000000', '', 'none']);
+      if (!existingFill || GRAPHVIZ_DEFAULT_TEXT.has(existingFill)) {
+        el.setAttribute('fill', defaultTextFill);
+      }
+      if (isDark) {
+        el.setAttribute('paint-order', 'stroke');
+        el.setAttribute('stroke', '#0d0d1a');
+        el.setAttribute('stroke-width', '0.3px');
+        el.setAttribute('stroke-linejoin', 'round');
+      } else {
+        el.removeAttribute('paint-order');
+        el.removeAttribute('stroke');
+        el.removeAttribute('stroke-width');
+      }
     });
   }
 
@@ -1197,33 +1314,139 @@
   let wsEditingNode = null;
   let wsOriginalDot = '';
 
+  function selectFillPreset(color) {
+    document.getElementById('popup-fill').value = color;
+    document.getElementById('popup-fill-picker').value = color;
+    updateActiveChip('fill-palette', color);
+  }
+  function updateFillFromPicker(color) {
+    document.getElementById('popup-fill').value = color;
+    updateActiveChip('fill-palette', color);
+  }
+
+  function selectFontColorPreset(color) {
+    document.getElementById('popup-fontcolor').value = color;
+    document.getElementById('popup-fontcolor-picker').value = color;
+    updateActiveChip('fontcolor-palette', color);
+  }
+  function updateFontColorFromPicker(color) {
+    document.getElementById('popup-fontcolor').value = color;
+    updateActiveChip('fontcolor-palette', color);
+  }
+
+  function updateActiveChip(paletteId, color) {
+    const palette = document.getElementById(paletteId);
+    if (!palette) return;
+    const colorLower = (color || '').toLowerCase().trim();
+    palette.querySelectorAll('.color-chip').forEach(chip => {
+      const dataColor = chip.getAttribute('data-color').toLowerCase().trim();
+      if (dataColor === colorLower) {
+        chip.classList.add('active');
+      } else {
+        chip.classList.remove('active');
+      }
+    });
+  }
+
+  // Bind input elements to highlight preset chips on change
+  document.addEventListener('DOMContentLoaded', () => {
+    const fillInput = document.getElementById('popup-fill');
+    if (fillInput) {
+      fillInput.addEventListener('input', (e) => {
+        const val = e.target.value;
+        updateActiveChip('fill-palette', val);
+        if (/^#[0-9a-f]{6}$/i.test(val)) {
+          document.getElementById('popup-fill-picker').value = val;
+        }
+      });
+    }
+    const fontcolorInput = document.getElementById('popup-fontcolor');
+    if (fontcolorInput) {
+      fontcolorInput.addEventListener('input', (e) => {
+        const val = e.target.value;
+        updateActiveChip('fontcolor-palette', val);
+        if (/^#[0-9a-f]{6}$/i.test(val)) {
+          document.getElementById('popup-fontcolor-picker').value = val;
+        }
+      });
+    }
+  });
+
   function openNodePopup(nodeId, event) {
     wsEditingNode = nodeId;
     wsOriginalDot = document.getElementById('dot-editor').value;
     const dot = wsOriginalDot;
     const idEscaped = nodeId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const nodeRegex = new RegExp(`(?<![\\w])${idEscaped}\\s*\\[([^\\]]*)\\]`, 'i');
+    
+    // Match either unquoted word boundary or quoted string ID followed by brackets [attrs]
+    const nodeRegex = new RegExp(`(?:(?<![\\w])${idEscaped}(?![\\w])|"${idEscaped}")\\s*\\[([^\\]]*)\\]`, 'i');
     const nodeMatch = dot.match(nodeRegex);
-    let label = nodeId, shape = 'box', fillcolor = '', style = '', fontsize = '';
+    
+    let label = nodeId, shape = 'box', fillcolor = '', style = '', fontsize = '', fontcolor = '', bold = false;
     if (nodeMatch) {
       const a = nodeMatch[1];
-      const l = a.match(/label\s*=\s*"([^"]*)"/i); if (l) label = l[1];
-      const s = a.match(/shape\s*=\s*(\w+)/i); if (s) shape = s[1];
-      const f = a.match(/fillcolor\s*=\s*"([^"]*)"/i); if (f) fillcolor = f[1];
-      const st = a.match(/style\s*=\s*"([^"]*)"/i); if (st) style = st[1];
-      const fs = a.match(/fontsize\s*=\s*"(\d+)"/i); if (fs) fontsize = fs[1];
+      
+      // Parse label (handles standard double quotes and HTML-like angle brackets)
+      const lMatch = a.match(/label\s*=\s*(?:"([^"]*)"|<([^>]*)>)/i);
+      if (lMatch) {
+        if (lMatch[1] !== undefined) {
+          label = lMatch[1];
+        } else if (lMatch[2] !== undefined) {
+          let innerHtml = lMatch[2].trim();
+          const boldMatch = innerHtml.match(/^<B>([\s\S]*?)<\/B>$/i);
+          if (boldMatch) {
+            bold = true;
+            label = boldMatch[1];
+          } else {
+            label = innerHtml;
+          }
+        }
+      }
+      
+      // Match other attributes (quoted or unquoted)
+      const s = a.match(/shape\s*=\s*(?:"([^"]*)"|([^\s,\]]+))/i); if (s) shape = s[1] || s[2];
+      const f = a.match(/fillcolor\s*=\s*(?:"([^"]*)"|([^\s,\]]+))/i); if (f) fillcolor = f[1] || f[2];
+      const st = a.match(/style\s*=\s*(?:"([^"]*)"|([^\s,\]]+))/i); if (st) style = st[1] || st[2];
+      const fs = a.match(/fontsize\s*=\s*(?:"([^"]*)"|([^\s,\]]+))/i); if (fs) fontsize = fs[1] || fs[2];
+      const fc = a.match(/fontcolor\s*=\s*(?:"([^"]*)"|([^\s,\]]+))/i); if (fc) fontcolor = fc[1] || fc[2];
     }
-    document.getElementById('popup-label').value = label;
+    
+    document.getElementById('popup-label').value = label.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    document.getElementById('popup-bold').checked = bold;
     document.getElementById('popup-shape').value = shape;
     document.getElementById('popup-fill').value = fillcolor;
     document.getElementById('popup-style').value = style;
     document.getElementById('popup-fontsize').value = fontsize;
+    document.getElementById('popup-fontcolor').value = fontcolor;
+
+    // Synchronize picker controls
+    if (/^#[0-9a-f]{6}$/i.test(fillcolor)) {
+      document.getElementById('popup-fill-picker').value = fillcolor;
+    } else {
+      document.getElementById('popup-fill-picker').value = '#ffffff';
+    }
+    if (/^#[0-9a-f]{6}$/i.test(fontcolor)) {
+      document.getElementById('popup-fontcolor-picker').value = fontcolor;
+    } else {
+      document.getElementById('popup-fontcolor-picker').value = '#000000';
+    }
+
+    // Mark active chips
+    updateActiveChip('fill-palette', fillcolor);
+    updateActiveChip('fontcolor-palette', fontcolor);
+
     const popup = document.getElementById('node-popup');
     const mouseX = event.clientX || event.pageX;
     const mouseY = event.clientY || event.pageY;
-    popup.style.left = Math.min(mouseX, window.innerWidth - 240) + 'px';
-    popup.style.top = Math.min(mouseY, window.innerHeight - 300) + 'px';
+    
+    // Show popup first so offsetWidth and offsetHeight can be read correctly
     popup.classList.add('active');
+    
+    const popupWidth = popup.offsetWidth || 260;
+    const popupHeight = popup.offsetHeight || 480;
+    
+    popup.style.left = Math.max(10, Math.min(mouseX, window.innerWidth - popupWidth - 10)) + 'px';
+    popup.style.top = Math.max(10, Math.min(mouseY, window.innerHeight - popupHeight - 10)) + 'px';
   }
 
   function closeNodePopup() { document.getElementById('node-popup').classList.remove('active'); wsEditingNode = null; }
@@ -1233,24 +1456,65 @@
     const dot = wsOriginalDot;
     const nodeId = wsEditingNode;
     const newLabel = document.getElementById('popup-label').value;
+    const isBold = document.getElementById('popup-bold').checked;
     const newShape = document.getElementById('popup-shape').value;
-    const newFill = document.getElementById('popup-fill').value;
+    const newFill = document.getElementById('popup-fill').value.trim();
     const newStyle = document.getElementById('popup-style').value;
-    const newFontSize = document.getElementById('popup-fontsize').value;
-    const quotedLabel = newLabel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const idEscaped = nodeId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    let newAttrs = `label="${quotedLabel}"`;
+    const newFontSize = document.getElementById('popup-fontsize').value.trim();
+    const newFontColor = document.getElementById('popup-fontcolor').value.trim();
+
+    // Prepare label attribute
+    let labelAttr = '';
+    if (isBold) {
+      const escapedLabel = newLabel.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      labelAttr = `label=<<B>${escapedLabel}</B>>`;
+    } else {
+      const quotedLabel = newLabel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      labelAttr = `label="${quotedLabel}"`;
+    }
+
+    // Ensure style contains "filled" if a fill color is specified, so Graphviz renders background color
+    let finalStyle = newStyle;
+    if (newFill) {
+      if (!newStyle) {
+        finalStyle = "filled";
+      } else if (!newStyle.toLowerCase().includes("filled")) {
+        finalStyle = `${newStyle},filled`;
+      }
+    }
+
+    let newAttrs = labelAttr;
     if (newShape) newAttrs += ` shape=${newShape}`;
     if (newFill) newAttrs += ` fillcolor="${newFill}"`;
-    if (newStyle) newAttrs += ` style="${newStyle}"`;
+    if (finalStyle) newAttrs += ` style="${finalStyle}"`;
     if (newFontSize) newAttrs += ` fontsize="${newFontSize}"`;
-    const nodeRegex = new RegExp(`(?<![\\w])${idEscaped}\\s*\\[[^\\]]*\\]`, 'i');
+    if (newFontColor) newAttrs += ` fontcolor="${newFontColor}"`;
+
+    const idEscaped = nodeId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const nodeRegex = new RegExp(`(?:(?<![\\w])${idEscaped}(?![\\w])|"${idEscaped}")\\s*\\[[^\\]]*\\]`, 'i');
+    
+    // Check if ID needs surrounding quotes in DOT syntax
+    const needsQuotes = /[^a-zA-Z0-9_]/.test(nodeId);
+    const formattedNodeId = needsQuotes ? `"${nodeId}"` : nodeId;
+
+    let newDot = dot;
     if (nodeRegex.test(dot)) {
-      const newDot = dot.replace(nodeRegex, `${nodeId} [${newAttrs}]`);
-      document.getElementById('dot-editor').value = newDot;
-      wsOriginalDot = newDot;
-      // Node edit applied to editor — click Compile to re-render.
+      newDot = dot.replace(nodeRegex, `${formattedNodeId} [${newAttrs}]`);
+    } else {
+      // Node was implicitly defined in edges, declare it explicitly after opening brace
+      const firstBraceIdx = dot.indexOf('{');
+      if (firstBraceIdx !== -1) {
+        newDot = dot.slice(0, firstBraceIdx + 1) + `\n  ${formattedNodeId} [${newAttrs}];` + dot.slice(firstBraceIdx + 1);
+      } else {
+        newDot = dot + `\n${formattedNodeId} [${newAttrs}];`;
+      }
     }
+
+    document.getElementById('dot-editor').value = newDot;
+    wsOriginalDot = newDot;
+    
+    // Re-render and compile diagram automatically
+    wsRenderFull();
     closeNodePopup();
   }
 
@@ -1544,11 +1808,11 @@
 
     const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
     style.textContent = `
-      .node rect, .node polygon, .node circle, .node ellipse { fill: #faf6ee; stroke: #d97706; }
-      .edgeLabel rect { fill: #fdf8f0; }
-      .edgePath path { stroke: #7a756b; stroke-width: 1.5; }
-      .marker path { fill: #7a756b; }
-      text { fill: #1a1915; font-family: monospace; }
+      .node rect, .node polygon, .node circle, .node ellipse { fill: #cbd5e1; stroke: #1e293b; }
+      .edgeLabel rect { fill: #ffffff; }
+      .edgePath path { stroke: #1e293b; stroke-width: 1.5; }
+      .marker path { fill: #1e293b; }
+      text { fill: #000000; font-family: monospace; }
     `;
     svgClone.insertBefore(style, svgClone.firstChild);
 

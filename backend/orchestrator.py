@@ -77,6 +77,8 @@ def _handle_diagram(user_message: str, diagram_type: str) -> dict:
                 diagram_type=diagram_type,
                 context="",
             )
+            if response.startswith("NEED_MORE_CONTEXT"):
+                return {"mode": "qa", "response": response.split("NEED_MORE_CONTEXT: ", 1)[-1], "route": "clarification"}
             comment = "// Note: No documents uploaded yet. Generated from general knowledge.\n"
             if response.strip().startswith("digraph") or response.strip().startswith("graph"):
                 response = comment + response
@@ -89,14 +91,17 @@ def _handle_diagram(user_message: str, diagram_type: str) -> dict:
         context = get_all_content(max_chars=3500)
         context = _strip_source_headers(context)
         print(f"[Orchestrator] ROUTE 4 — RAG Diagram from document ({len(context)} chars)")
+        response = generate(
+            prompt=user_message,
+            mode="diagram",
+            diagram_type=diagram_type,
+            context=context,
+        )
+        if response.startswith("NEED_MORE_CONTEXT"):
+            return {"mode": "qa", "response": response.split("NEED_MORE_CONTEXT: ", 1)[-1], "route": "clarification"}
         return {
             "mode": "diagram",
-            "response": generate(
-                prompt=user_message,
-                mode="diagram",
-                diagram_type=diagram_type,
-                context=context,
-            ),
+            "response": response,
             "layout_engine": diagram_type,
             "route": "rag_diagram",
         }
@@ -112,28 +117,34 @@ def _handle_diagram(user_message: str, diagram_type: str) -> dict:
                 context = _build_context_from_chunks(chunks, max_chars=3000)
                 context = _strip_source_headers(context)
                 print(f"[Orchestrator] ROUTE 5 — RAG→Diagram (score={best_score:.3f})")
+                response = generate(
+                    prompt=user_message,
+                    mode="diagram",
+                    diagram_type=diagram_type,
+                    context=context,
+                )
+                if response.startswith("NEED_MORE_CONTEXT"):
+                    return {"mode": "qa", "response": response.split("NEED_MORE_CONTEXT: ", 1)[-1], "route": "clarification"}
                 return {
                     "mode": "diagram",
-                    "response": generate(
-                        prompt=user_message,
-                        mode="diagram",
-                        diagram_type=diagram_type,
-                        context=context,
-                    ),
+                    "response": response,
                     "layout_engine": diagram_type,
                     "route": "rag_to_diagram",
                 }
 
     # ── ROUTE 3: General Diagram ──────────────────────────────────────────────
     print(f"[Orchestrator] ROUTE 3 — General Diagram")
+    response = generate(
+        prompt=user_message,
+        mode="diagram",
+        diagram_type=diagram_type,
+        context="",
+    )
+    if response.startswith("NEED_MORE_CONTEXT"):
+        return {"mode": "qa", "response": response.split("NEED_MORE_CONTEXT: ", 1)[-1], "route": "clarification"}
     return {
         "mode": "diagram",
-        "response": generate(
-            prompt=user_message,
-            mode="diagram",
-            diagram_type=diagram_type,
-            context="",
-        ),
+        "response": response,
         "layout_engine": diagram_type,
         "route": "general_diagram",
     }

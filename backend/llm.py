@@ -412,69 +412,67 @@ def _stop_tokens() -> list:
 DIAGRAM_PROMPTS = {
     "dot": """Output ONLY valid Graphviz DOT code. Start with `digraph G {`. Use `rankdir`, `node [shape=box]`, and `edge` attributes. No markdown fences. No explanation text. No commentary.
 
+    CRITICAL RULE: Your diagram content MUST come 100% from the user's prompt.
+    NEVER copy or reproduce any node, label, or structure from the example below.
+    NEVER add nodes, components, or concepts NOT mentioned in the user's prompt.
+    If the prompt is too vague, output ONLY this text: NEED_MORE_CONTEXT
+
     SYNTAX RULES:
     - Start with: digraph G {
-    - Node IDs: short alphanumeric (A, B, Login, Auth)
-    - Labels: A [label="Label text"];
-    - Edges: A -> B;
-    - Edge labels: A -> B [label="description"];
-    - Subgraphs: subgraph cluster_Name { label="Title"; ... }
+    - Always include graph-level: label="<Title>\n<Subtitle from prompt>"; labelloc=t; fontsize=16;
+    - Node IDs: short alphanumeric (N1, N2, or descriptive like AuthSvc)
+    - Labels: N1 [label="Label text"];
+    - Edges: N1 -> N2;
+    - Edge labels: N1 -> N2 [label="description"];
+    - ALL nodes MUST be inside subgraphs: subgraph cluster_Name { label="Title"; ... }
+    - NEVER place any node outside a subgraph
     - End with: }
 
     STYLING:
-    - node [shape=box, style="rounded,filled", fillcolor="#faf6ee", fontname="Arial", fontsize=12];
+    - node [shape=box, style="rounded,filled", fillcolor="#cbd5e1", fontname="Arial", fontsize=12];
     - edge [fontname="Arial", fontsize=11, fontcolor="#000000"];
-    - All node labels must be SPECIFIC real actions from the topic
+    - All node labels must be SPECIFIC real actions/components from the user's prompt topic
 
     CONTENT RULES:
     - NEVER generic: "Start", "End", "Decision", "Process"
-    - Every node = SPECIFIC real action
-    - At LEAST 10 nodes, use subgraphs to organize
-    - Edge labels must describe actual data or actions
+    - Every node = SPECIFIC real component or action derived from the user's topic
+    - At LEAST 10 nodes, organized in subgraph clusters by logical layer
+    - Edge labels must describe actual data flow or actions
 
-    Example:
+    ===== EXAMPLE ONLY — DO NOT COPY ANY OF THESE NODES OR LABELS =====
+    (This shows SYNTAX only. Replace every node/edge with content from the user's prompt.)
     digraph G {
         rankdir=TB;
-        node [shape=box, style="rounded,filled", fillcolor="#faf6ee", fontname="Arial", fontsize=12];
+        label="Example System\nArchitecture Overview"; labelloc=t; fontsize=16;
+        node [shape=box, style="rounded,filled", fillcolor="#cbd5e1", fontname="Arial", fontsize=12];
         edge [fontname="Arial", fontsize=11, fontcolor="#000000"];
-        subgraph cluster_Frontend {
-            label="Frontend";
-            A [label="Customer opens product page"];
-            B [label="Add item to shopping cart"];
-            C [label="Cart has 3+ items?" shape=diamond];
-            D [label="Show bulk discount"];
-            E [label="Standard pricing"];
-            A -> B;
-            B -> C;
-            C -> D [label="Yes"];
-            C -> E [label="No"];
+        subgraph cluster_Layer1 {
+            label="Ingestion Layer";
+            N1 [label="Source System A"];
+            N2 [label="Source System B"];
+            N3 [label="Data Collector"];
+            N1 -> N3 [label="raw events"];
+            N2 -> N3 [label="raw events"];
         }
-        subgraph cluster_Checkout {
-            label="Checkout";
-            F [label="Enter shipping address"];
-            G [label="Select payment method"];
-            H [label="Credit card valid?" shape=diamond];
-            I [label="Process payment via Stripe"];
-            J [label="Display card error"];
-            D -> F;
-            E -> F;
-            F -> G;
-            G -> H;
-            H -> I [label="Yes"];
-            H -> J [label="No"];
-            J -> G;
+        subgraph cluster_Layer2 {
+            label="Processing Layer";
+            N4 [label="Stream Processor"];
+            N5 [label="Validation Engine"];
+            N6 [label="Enrichment Service"];
+            N3 -> N4 [label="batched records"];
+            N4 -> N5;
+            N5 -> N6;
         }
-        subgraph cluster_Fulfillment {
-            label="Fulfillment";
-            K [label="Generate order confirmation"];
-            L [label="Send confirmation email"];
-            M [label="Update inventory database"];
-            I -> K;
-            K -> L;
-            L -> M;
+        subgraph cluster_Layer3 {
+            label="Storage Layer";
+            N7 [label="Data Lake"];
+            N8 [label="Data Warehouse"];
+            N6 -> N7 [label="ELT"];
+            N6 -> N8 [label="ETL"];
         }
     }
-    Now generate a DETAILED, COMPLEX DOT digraph with subgraphs for:""",
+    ===== END EXAMPLE — NOW generate a diagram 100% about the user's topic below =====
+    Now generate a DETAILED, SPECIFIC DOT digraph with subgraphs for:""",
     "dot_sequence": """Output ONLY valid Graphviz DOT code. Start with `digraph G {`. No markdown fences. No explanation.
 
 Use rankdir=LR for left-to-right sequence flow.
@@ -488,7 +486,7 @@ CRITICAL RULES:
 Example — user registration:
 digraph G {
     rankdir=LR;
-    node [shape=box, style="rounded,filled", fillcolor="#faf6ee"];
+    node [shape=box, style="rounded,filled", fillcolor="#cbd5e1"];
     UserBrowser [label="User Browser"];
     AuthAPI [label="Auth API"];
     UserDB [label="User DB"];
@@ -514,7 +512,7 @@ CRITICAL RULES:
 Example — hospital system:
 graph ER {
     layout=fdp;
-    node [shape=record, style=filled, fillcolor="#faf6ee"];
+    node [shape=record, style=filled, fillcolor="#cbd5e1"];
     Patient [label="{Patient|patient_id : int PK\\lfull_name : string\\ldate_of_birth : date\\lblood_type : string\\l}"];
     Doctor [label="{Doctor|doctor_id : int PK\\lfull_name : string\\lspecialization : string\\ldepartment_id : int FK\\l}"];
     Appointment [label="{Appointment|appt_id : int PK\\lpatient_id : int FK\\ldoctor_id : int FK\\lscheduled_at : datetime\\lstatus : string\\l}"];
@@ -535,7 +533,7 @@ CRITICAL RULES:
 Example — online store:
 digraph G {
     rankdir=BT;
-    node [shape=record, style=filled, fillcolor="#faf6ee"];
+    node [shape=record, style=filled, fillcolor="#cbd5e1"];
     Product [label="{Product|+productId : int\\l+name : String\\l+price : float\\l|+getDiscountedPrice()\\l}"];
     PhysicalProduct [label="{PhysicalProduct|+weight : float\\l|+calculateShipping()\\l}"];
     DigitalProduct [label="{DigitalProduct|+downloadUrl : String\\l|+generateLicense()\\l}"];
@@ -556,7 +554,7 @@ CRITICAL RULES:
 Example — bug tracking:
 digraph G {
     rankdir=LR;
-    node [shape=box, style="rounded,filled", fillcolor="#faf6ee"];
+    node [shape=box, style="rounded,filled", fillcolor="#cbd5e1"];
     start [shape=point, width=0.2];
     end_state [shape=doublecircle, width=0.3, label=""];
     Reported [label="Reported"];
@@ -589,7 +587,7 @@ CRITICAL RULES:
 Example — mobile app launch:
 digraph G {
     rankdir=LR;
-    node [shape=box, style="filled,rounded", fillcolor="#faf6ee"];
+    node [shape=box, style="filled,rounded", fillcolor="#cbd5e1"];
     subgraph cluster_Research {
         label="Research";
         A [label="User interviews\\n14 days"];
@@ -637,7 +635,7 @@ digraph G {
     D [label="Database (RDS)\\n18%" fillcolor="#f43f5e"];
     E [label="Monitoring\\n7%" fillcolor="#10b981"];
     F [label="Other services\\n5%" fillcolor="#8b5cf6"];
-    Center [label="Total Budget" shape=ellipse, style="filled", fillcolor="#fdf8f0"];
+    Center [label="Total Budget" shape=ellipse, style="filled", fillcolor="#cbd5e1"];
     Center -> A;
     Center -> B;
     Center -> C;
@@ -658,8 +656,8 @@ Example — machine learning:
 digraph G {
     layout=twopi;
     root=center;
-    node [shape=box, style="filled,rounded", fillcolor="#faf6ee"];
-    center [label="ML Pipeline" shape=ellipse, fillcolor="#fef3e2", fontsize=14];
+    node [shape=box, style="filled,rounded", fillcolor="#cbd5e1"];
+    center [label="ML Pipeline" shape=ellipse, fillcolor="#fed7aa", fontsize=14];
     dc [label="Data Collection"];
     dc1 [label="Web scraping APIs"];
     dc2 [label="CSV file imports"];
@@ -758,7 +756,7 @@ BUILD THE DIAGRAM:
 RULES:
 • Output ONLY valid DOT code — NO text before or after
 • Start with digraph G { and end with }
-• Use node [shape=box, style=\"rounded,filled\", fillcolor=\"#faf6ee\"] for styling
+• Use node [shape=box, style=\"rounded,filled\", fillcolor=\"#cbd5e1\"] for styling
 • Use A -> B [label=\"action\"] for labeled edges
 """
 
@@ -877,20 +875,21 @@ def generate(
 
         # ── System prompt: short & direct (small models work better with less)
         diagram_sys = (
-    "Output only valid Graphviz DOT code. Start with `digraph G {`. "
-    "Always include `rankdir`, `node [shape=box]`, and `edge` attributes. "
-    "Use `fontname=\"Arial\"` and `fontsize=12` for nodes, `fontsize=11` for edges. "
-    "Do not use markdown fences, explanation text, or commentary. "
-    "RULES: Every node label MUST be specific to the user's topic. "
-    "BANNED labels: Start, End, Process, Decision, Action, Step, Node, Other. "
-    "Syntax must strictly follow Graphviz DOT standards. "
-    "Do not hallucinate or invent labels, attributes, or structures. "
-    "If the user's prompt does not provide enough detail, ask for clarification before generating code. "
-    "Never repeat the same code or explanation unnecessarily. "
-    "Always rely on the user's prompt as the single source of truth. "
-    "Do not ever hallucinate your answer — rely only on the user's prompt. "
-    f"Syntax: {type_hint}"
-)
+            "Output only valid Graphviz DOT code. Start with `digraph G {`. "
+            "Always include `rankdir`, `node [shape=box]`, and `edge` attributes. "
+            "Use `fontname=\"Arial\"` and `fontsize=12` for nodes, `fontsize=11` for edges. "
+            "Do not use markdown fences, explanation text, or commentary. "
+            "RULES: Every node label MUST be specific to the user's topic. "
+            "BANNED labels: Start, End, Process, Decision, Action, Step, Node, Other. "
+            "Syntax must strictly follow Graphviz DOT standards. "
+            "Do not hallucinate or invent labels, attributes, or structures. "
+            "Always include a graph-level title and optional subtitle based on the user's prompt using the 'label' attribute (e.g. label=\"Title\\nSubtitle\"; labelloc=t; fontsize=16;). "
+            "Do NOT copy node/subgraph names from the examples (like 'Frontend', 'Checkout', 'Fulfillment', 'UserBrowser', 'AuthAPI', or 'UserDB') unless they are explicitly mentioned in the user's prompt. "
+            "Never repeat the same code or explanation unnecessarily. "
+            "Always rely on the user's prompt as the single source of truth. "
+            "Do not ever hallucinate your answer — rely only on the user's prompt. "
+            f"Syntax: {type_hint}"
+        )
 
 
         if context:
@@ -921,6 +920,9 @@ def generate(
         def _generate_once(t):
             r = llm(full_prompt, max_tokens=max_new_tokens, temperature=t, stop=stops, echo=False)
             body = r["choices"][0]["text"].strip()
+            # Detect if the model signals it needs more context
+            if "NEED_MORE_CONTEXT" in body.upper():
+                return "NEED_MORE_CONTEXT"
             # Remove any repeated digraph header the model might echo
             if body.lower().startswith("digraph"):
                 pass  # keep it, process_diagram will handle
@@ -929,9 +931,12 @@ def generate(
             # Ensure closing brace
             if full.count("{") > full.count("}"):
                 full += "\n}" * (full.count("{") - full.count("}"))
-            return process_diagram(full, layout_engine)
+            return process_diagram(full, layout_engine, prompt)
 
         processed = _generate_once(temp)
+        # If model asks for more context, return that immediately
+        if processed == "NEED_MORE_CONTEXT":
+            return "NEED_MORE_CONTEXT: I don't have enough context to generate this diagram accurately. Could you please provide more detail about what you'd like to diagram?"
         score = complexity_score(processed)
         print(f"[LLM] Diagram attempt 1: score={score}")
 
@@ -941,6 +946,8 @@ def generate(
             print(f"[LLM] Rejected ({reason}) — retrying...")
             for attempt in range(2):
                 p2 = _generate_once(0.3 + attempt * 0.1)
+                if p2 == "NEED_MORE_CONTEXT":
+                    break
                 s2 = complexity_score(p2)
                 print(f"[LLM] Retry {attempt+1}: score={s2}")
                 if s2 > score:
