@@ -1211,12 +1211,11 @@
   }
 
   function applyThemeToSVG(svg) {
-    const isDark = document.body.getAttribute('data-theme') === 'dark';
-    const defaultNodeFill = isDark ? '#2e2e3e' : '#cbd5e1';
-    const defaultTextFill = isDark ? '#ffffff' : '#000000';
-    const stroke = isDark ? '#818cf8' : '#1e293b';
-    const edgeStroke = isDark ? '#94a3b8' : '#1e293b';
-    const labelBg = isDark ? '#1e1e24' : '#ffffff';
+    const defaultNodeFill = '#cbd5e1';
+    const defaultTextFill = '#000000';
+    const stroke = '#1e293b';
+    const edgeStroke = '#1e293b';
+    const labelBg = '#ffffff';
 
     // Defaults that Graphviz uses when no explicit color is set
     const GRAPHVIZ_DEFAULT_FILLS = new Set([
@@ -1242,16 +1241,9 @@
         if (!existingFill || GRAPHVIZ_DEFAULT_TEXT.has(existingFill)) {
           textEl.setAttribute('fill', defaultTextFill);
         }
-        if (isDark) {
-          textEl.setAttribute('paint-order', 'stroke');
-          textEl.setAttribute('stroke', '#0d0d1a');
-          textEl.setAttribute('stroke-width', '0.3px');
-          textEl.setAttribute('stroke-linejoin', 'round');
-        } else {
-          textEl.removeAttribute('paint-order');
-          textEl.removeAttribute('stroke');
-          textEl.removeAttribute('stroke-width');
-        }
+        textEl.removeAttribute('paint-order');
+        textEl.removeAttribute('stroke');
+        textEl.removeAttribute('stroke-width');
       });
     });
 
@@ -1267,16 +1259,9 @@
       if (!existingFill || GRAPHVIZ_DEFAULT_TEXT.has(existingFill)) {
         el.setAttribute('fill', defaultTextFill);
       }
-      if (isDark) {
-        el.setAttribute('paint-order', 'stroke');
-        el.setAttribute('stroke', '#0d0d1a');
-        el.setAttribute('stroke-width', '0.3px');
-        el.setAttribute('stroke-linejoin', 'round');
-      } else {
-        el.removeAttribute('paint-order');
-        el.removeAttribute('stroke');
-        el.removeAttribute('stroke-width');
-      }
+      el.removeAttribute('paint-order');
+      el.removeAttribute('stroke');
+      el.removeAttribute('stroke-width');
     });
   }
 
