@@ -217,7 +217,7 @@ PNG / SVG Output
 
 ---
 
-# API Overview
+# Sample API Overview
 
 ## Chat Endpoint
 
