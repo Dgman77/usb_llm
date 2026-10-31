@@ -117,48 +117,32 @@ cd usb_llm
 ## Install Dependencies
 
 ```bash
-pip install -r backend/requirements.txt
+Setup.Bat - # Used to install a Sepertate Python environment + Extra Dependencies
+
+Note : It will create a python folder inside we have  all dependencies + Modified AI Model Also Downloaded In \models Folder.
 ```
 
 ## Add Model
-
-Create a `models` directory:
-
-```bash
-mkdir models
-```
-
-Place your `.gguf` model inside:
-
 ```text
-models/
-└── model.gguf
-```
+You can add a Different Model But it Will Struggle to Create a DOT code fort Diagram generation.
 
-Example:
-
-```text
-models/
-└── Phi-3-mini-4k-instruct-q4.gguf
+Always Increase The Context Window Value.
 ```
 
 ---
+
 
 # Running the Application
 
 ## Start Web Server
 
 ```bash
-python backend/main.py
+Douple - Click The start.bat (or) .\start.bat Inside the Powershell To run the application [http://localhost:8787]
+
+Note: Before click the start.bat , You must Ran the setup.bat .
 ```
 
-Open:
 
-```text
-http://localhost:8787
-```
-
----
 
 ## Run CLI Chat
 
